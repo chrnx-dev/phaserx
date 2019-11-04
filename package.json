@@ -1,0 +1,29 @@
+{
+  "name": "phaserx",
+  "version": "0.0.1",
+  "description": "A Phaser Type Script Webpack Library",
+  "main": "src/game.ts",
+  "scripts": {
+    "start": "webpack-dev-server --config webpack/base.js --open"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "clean-webpack-plugin": "^3.0.0",
+    "file-loader": "^4.2.0",
+    "html-webpack-plugin": "^3.2.0",
+    "raw-loader": "^3.1.0",
+    "reflect-metadata": "^0.1.13",
+    "terser-webpack-plugin": "^2.2.1",
+    "ts-loader": "^6.2.1",
+    "tslint": "^6.0.0-beta0",
+    "typescript": "^3.6.4",
+    "webpack": "^4.41.2",
+    "webpack-cli": "^3.3.10",
+    "webpack-dev-server": "^3.9.0",
+    "webpack-merge": "^4.2.2"
+  },
+  "dependencies": {
+    "phaser": "^3.20.1"
+  }
+}
