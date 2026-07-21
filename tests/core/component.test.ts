@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
-import { f32, i16, u8 } from '../../src/core/column'
-import { component, DEFAULT_CAPACITY } from '../../src/core/component'
+import { f32, i16, ref, u8 } from '../../src/core/column'
+import { component, DEFAULT_CAPACITY, getDefaults } from '../../src/core/component'
 
 describe('component()', () => {
   test('crea una columna TypedArray por campo', () => {
@@ -59,6 +59,20 @@ describe('component()', () => {
         @f32 #bad = 0
       }
     }).toThrow(/privado/)
+  })
+
+  test('captura los valores iniciales de la clase como defaults', () => {
+    const Stats = component(class { @i16 hp = 100; @f32 speed = 2.5; @ref name!: string })
+    expect(getDefaults(Stats)).toEqual({ hp: 100, speed: 2.5, name: undefined })
+  })
+
+  test('los defaults no aparecen como propiedad del store', () => {
+    const Stats = component(class { @i16 hp = 100 })
+    expect(Object.keys(Stats)).toEqual(['hp'])
+  })
+
+  test('getDefaults devuelve undefined para un store ajeno', () => {
+    expect(getDefaults({})).toBeUndefined()
   })
 
   test('una clase rechazada no filtra sus columnas al siguiente componente', () => {

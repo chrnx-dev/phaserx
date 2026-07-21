@@ -21,3 +21,10 @@ Task 5: complete (commits ccc4399..77a445b, review clean)
 Task 6: complete (commits 77a445b..9594d9b, review clean)
 Task 7: complete (commits 9594d9b..fb3b4cb, review clean; fix Critical de fuga del buffer de assets)
   Nota: tsconfig ahora incluye "phaser" en compilerOptions.types (los tipos viven fuera de @types).
+Task 8: complete (commits fb3b4cb..5fa713d, review clean; 3 fixes Important)
+  - orden de sync ahora en PRE_UPDATE/POST_UPDATE via hooks de World (GameScene.update ya no existe)
+  - GameScene.create detecta bindings de @Asset huerfanos
+  - jsdom + shim de canvas centralizados en vitest.config.ts
+  Minor pendientes para el review final:
+  - comentario dice "boot de la escena" donde Phaser en realidad registra en start()
+  - la deteccion de bindings huerfanos no cubre colision de nombre de propiedad

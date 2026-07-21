@@ -1,6 +1,7 @@
 import {
   addComponent,
   addEntity,
+  createEntityIndex,
   createWorld,
   hasComponent,
   observe,
@@ -11,6 +12,7 @@ import {
   type World as BitWorld,
 } from 'bitecs'
 import type { Column } from './column'
+import { getDefaults } from './component'
 
 export type Entity = number
 
@@ -32,6 +34,58 @@ function isSetter(part: object | Setter): part is Setter {
   return SETTER in part
 }
 
+function removeFrom<T>(list: T[], item: T): void {
+  const i = list.indexOf(item)
+  if (i !== -1) list.splice(i, 1)
+}
+
+/**
+ * Devuelve las columnas del componente a su valor declarado para ese eid.
+ *
+ * Los entity ids se reciclan y las columnas son buffers module-level que nadie
+ * limpia al destruir una entidad, asi que sin esto una entidad nueva heredaria
+ * la posicion, la velocidad y la vida del ocupante anterior de su id.
+ */
+function resetToDefaults(component: object, eid: Entity): void {
+  const initial = getDefaults(component)
+  if (initial === undefined) return
+  const store = component as Record<string, { [i: number]: unknown }>
+  for (const key of Object.keys(initial)) {
+    const column = store[key]
+    const value = initial[key]
+    if (value !== undefined) {
+      column[eid] = value
+    } else if (Array.isArray(column)) {
+      // Campo por referencia sin inicializador: borrar la celda en vez de
+      // dejar `undefined` explicito evita retener el objeto anterior.
+      delete (column as unknown[])[eid]
+    } else {
+      // Un TypedArray no puede guardar `undefined`: asignarlo daria NaN.
+      column[eid] = 0
+    }
+  }
+}
+
+/**
+ * Entity index compartido por TODOS los World. Deliberado, no un descuido.
+ *
+ * Las columnas de un componente son estado module-level: `Position.x` es un
+ * unico Float32Array indexado por entity id, comun a todo el proceso. Los
+ * World, en cambio, son uno por escena. Si cada World tuviera su propio index,
+ * dos escenas vivas a la vez (lo normal en Phaser: HUD sobre gameplay, o un
+ * `scene.launch`) empezarian ambas en el eid 1 y se pisarian las columnas: el
+ * spawn de una sobreescribe `Sprite.go` de la otra, el GameObject pisado queda
+ * huerfano y nunca se destruye, y `destroy` en una mata el sprite de la otra.
+ *
+ * Compartir el index hace que los eids sean unicos a nivel proceso, asi que
+ * dos worlds nunca indexan la misma celda. El costo es un espacio de ids
+ * comun (la capacidad de las columnas se reparte entre escenas), que es
+ * exactamente el trade-off que impone tener columnas module-level.
+ *
+ * No lo cambies a un index por World sin antes hacer las columnas por World.
+ */
+const sharedEntityIndex = createEntityIndex()
+
 export class World {
   readonly raw: BitWorld
 
@@ -39,17 +93,25 @@ export class World {
   private readonly postSyncHooks: Array<() => void> = []
 
   constructor() {
-    this.raw = createWorld()
+    this.raw = createWorld(sharedEntityIndex)
   }
 
-  /** Registra trabajo que corre antes del step de fisica de Phaser. */
-  onPreSync(hook: () => void): void {
+  /**
+   * Registra trabajo que corre antes del step de fisica de Phaser.
+   * Devuelve una funcion que quita el hook.
+   */
+  onPreSync(hook: () => void): () => void {
     this.preSyncHooks.push(hook)
+    return () => removeFrom(this.preSyncHooks, hook)
   }
 
-  /** Registra trabajo que corre despues del step de fisica de Phaser. */
-  onPostSync(hook: () => void): void {
+  /**
+   * Registra trabajo que corre despues del step de fisica de Phaser.
+   * Devuelve una funcion que quita el hook.
+   */
+  onPostSync(hook: () => void): () => void {
     this.postSyncHooks.push(hook)
+    return () => removeFrom(this.postSyncHooks, hook)
   }
 
   runPreSync(): void {
@@ -71,6 +133,11 @@ export class World {
     const eid = addEntity(this.raw)
     for (const part of parts) {
       if (isSetter(part)) {
+        // Resetear ANTES de aplicar los valores: el eid puede venir reciclado
+        // con basura del ocupante anterior, y un set parcial solo pisa las
+        // columnas que nombra. Lo que no nombra debe quedar en su default
+        // declarado, no en el valor del muerto.
+        resetToDefaults(part.component, eid)
         // Los valores se escriben ANTES de addComponent a proposito: los
         // observers onAdd se disparan dentro de addComponent y deben ver el
         // componente ya inicializado. Escribir columnas no requiere que el
@@ -94,6 +161,9 @@ export class World {
         // columna del store.
         addComponent(this.raw, eid, { component: part.component })
       } else {
+        // Un componente crudo tambien arranca limpio: sin valores explicitos,
+        // todas sus columnas valen su default declarado.
+        resetToDefaults(part, eid)
         addComponent(this.raw, eid, { component: part })
       }
     }
@@ -116,14 +186,16 @@ export class World {
     return query(this.raw, components) as readonly Entity[]
   }
 
-  onAdd(component: object, callback: (entity: Entity) => void): void {
-    observe(this.raw, bitOnAdd(component), (eid: number) => {
+  /** Observa el alta del componente. Devuelve la funcion de desuscripcion. */
+  onAdd(component: object, callback: (entity: Entity) => void): () => void {
+    return observe(this.raw, bitOnAdd(component), (eid: number) => {
       callback(eid)
     })
   }
 
-  onRemove(component: object, callback: (entity: Entity) => void): void {
-    observe(this.raw, bitOnRemove(component), (eid: number) => {
+  /** Observa la baja del componente. Devuelve la funcion de desuscripcion. */
+  onRemove(component: object, callback: (entity: Entity) => void): () => void {
+    return observe(this.raw, bitOnRemove(component), (eid: number) => {
       callback(eid)
     })
   }

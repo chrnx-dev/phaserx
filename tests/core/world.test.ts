@@ -119,4 +119,105 @@ describe('World', () => {
     expect(() => world.runPreSync()).not.toThrow()
     expect(() => world.runPostSync()).not.toThrow()
   })
+
+  test('onPreSync devuelve una funcion que quita el hook', () => {
+    const spy = vi.fn()
+    const off = world.onPreSync(spy)
+    off()
+    world.runPreSync()
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  test('onPostSync devuelve una funcion que quita el hook', () => {
+    const spy = vi.fn()
+    const off = world.onPostSync(spy)
+    off()
+    world.runPostSync()
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  test('onAdd devuelve una funcion que cancela la suscripcion', () => {
+    const spy = vi.fn()
+    const off = world.onAdd(Health, spy)
+    off()
+    world.spawn(set(Health, { hp: 1 }))
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  test('onRemove devuelve una funcion que cancela la suscripcion', () => {
+    const spy = vi.fn()
+    const off = world.onRemove(Health, spy)
+    const e = world.spawn(set(Health, { hp: 1 }))
+    off()
+    world.destroy(e)
+    expect(spy).not.toHaveBeenCalled()
+  })
+})
+
+describe('World: reciclado de entity ids', () => {
+  test('una entidad nueva sobre un eid reciclado no hereda datos del ocupante anterior', () => {
+    const world = new World()
+    const muerto = world.spawn(set(Position, { x: 500, y: 900 }), set(Velocity, { x: 9, y: 9 }))
+    world.destroy(muerto)
+
+    const nuevo = world.spawn(Position, Velocity)
+    expect(nuevo).toBe(muerto) // el id se recicla: por eso hace falta el reset
+    expect(Position.x[nuevo]).toBe(0)
+    expect(Position.y[nuevo]).toBe(0)
+    expect(Velocity.x[nuevo]).toBe(0)
+    expect(Velocity.y[nuevo]).toBe(0)
+  })
+
+  test('un set parcial deja las columnas no especificadas en su default declarado', () => {
+    const world = new World()
+    const muerto = world.spawn(set(Position, { x: 500, y: 900 }))
+    world.destroy(muerto)
+
+    const nuevo = world.spawn(set(Position, { x: 5 }))
+    expect(Position.x[nuevo]).toBe(5)
+    expect(Position.y[nuevo]).toBe(0)
+  })
+
+  test('un componente con default no-cero arranca en su default', () => {
+    const Vitality = component(class { @i16 hp = 100 })
+    const world = new World()
+    const e = world.spawn(Vitality)
+    expect(Vitality.hp[e]).toBe(100)
+
+    Vitality.hp[e] = 3
+    world.destroy(e)
+    const otro = world.spawn(Vitality)
+    expect(Vitality.hp[otro]).toBe(100)
+  })
+
+  test('un campo por referencia vuelve a undefined al reciclarse el eid', () => {
+    const world = new World()
+    const muerto = world.spawn(set(Label, { text: 'jugador' }))
+    world.destroy(muerto)
+
+    const nuevo = world.spawn(Label)
+    expect(Label.text[nuevo]).toBeUndefined()
+  })
+})
+
+describe('World: aislamiento entre worlds simultaneos', () => {
+  test('dos worlds simultaneos no comparten entity ids', () => {
+    const a = new World()
+    const b = new World()
+    const ea = a.spawn(set(Position, { x: 1, y: 1 }))
+    const eb = b.spawn(set(Position, { x: 2, y: 2 }))
+    expect(ea).not.toBe(eb)
+    expect(Position.x[ea]).toBe(1)
+    expect(Position.x[eb]).toBe(2)
+  })
+
+  test('destruir en un world no afecta a las entidades del otro', () => {
+    const a = new World()
+    const b = new World()
+    const ea = a.spawn(set(Health, { hp: 10 }))
+    const eb = b.spawn(set(Health, { hp: 20 }))
+    a.destroy(ea)
+    expect([...b.query(Health)]).toContain(eb)
+    expect(Health.hp[eb]).toBe(20)
+  })
 })
