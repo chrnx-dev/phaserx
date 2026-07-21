@@ -16,12 +16,31 @@ export type SoA<T> = { [K in keyof T]: T[K] extends number ? Column : T[K][] }
 const defaults = new WeakMap<object, Readonly<Record<string, unknown>>>()
 
 /**
+ * Capacidad (cantidad de entity ids direccionables) por store.
+ *
+ * Vive en su propio WeakMap por la misma razon que los defaults: el store no
+ * puede tener claves que no sean columnas. La consulta `World.spawn` para
+ * detectar el desborde del espacio de ids, que de otro modo es silencioso: un
+ * `Float32Array` ignora la escritura fuera de rango y devuelve `undefined` al
+ * leer, mientras que las columnas `@ref` (arrays JS) crecen sin limite.
+ */
+const capacities = new WeakMap<object, number>()
+
+/**
  * Valores de reseteo declarados por el componente, o `undefined` si el store
  * no lo produjo `component()`. Lo consulta `World.spawn` para limpiar las
- * columnas de un entity id reciclado.
+ * columnas de un entity id reciclado, y `World.destroy` para soltar las
+ * referencias de la entidad que se va.
  */
 export function getDefaults(store: object): Readonly<Record<string, unknown>> | undefined {
   return defaults.get(store)
+}
+
+/**
+ * Capacidad declarada del store, o `undefined` si no lo produjo `component()`.
+ */
+export function getCapacity(store: object): number | undefined {
+  return capacities.get(store)
 }
 
 /**
@@ -40,6 +59,24 @@ export function getDefaults(store: object): Readonly<Record<string, unknown>> | 
  * las columnas son buffers compartidos). Un campo sin inicializador
  * (`@ref go!: SpriteLike`) resetea a `undefined` si es por referencia y a 0 si
  * es numerico, porque un TypedArray no puede guardar `undefined`.
+ *
+ * La clase de declaracion se instancia una vez (`new cls()`) para leer esos
+ * valores, asi que debe poder construirse sin argumentos y sin efectos
+ * secundarios: nada de I/O, registros globales ni acceso al DOM en sus
+ * inicializadores de campo.
+ *
+ * ADVERTENCIA: un `@ref` con inicializador objeto comparte UNA SOLA instancia
+ * entre todas las entidades, porque el default se captura de esa unica
+ * instancia y se asigna por referencia a cada celda:
+ *
+ * ```ts
+ * const Cfg = component(class { @ref cfg: object = {} })
+ * Cfg.cfg[a] === Cfg.cfg[b] // true: mutar uno muta a todos
+ * ```
+ *
+ * Si cada entidad necesita su propio objeto, declara el campo sin
+ * inicializador (`@ref cfg!: object`) y pasa la instancia en el `set()` del
+ * spawn.
  */
 export function component<C extends new () => unknown>(
   cls: C,
@@ -54,6 +91,7 @@ export function component<C extends new () => unknown>(
   const initial: Record<string, unknown> = {}
   for (const name of Object.keys(store)) initial[name] = declared[name]
   defaults.set(store, initial)
+  capacities.set(store, capacity)
 
   return store as SoA<InstanceType<C>>
 }

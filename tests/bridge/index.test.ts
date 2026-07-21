@@ -193,6 +193,135 @@ describe('attachSprites: idempotencia', () => {
   })
 })
 
+describe('bridge: Sprite exige Position', () => {
+  function makeFactory() {
+    const creados: ReturnType<typeof fakeSprite>[] = []
+    const factory = (key: string, x: number, y: number) => {
+      const s = fakeSprite(key, x, y)
+      creados.push(s)
+      return s as unknown as SpriteLike
+    }
+    return { creados, factory }
+  }
+
+  test('spawn de sprite() sin Position lanza', () => {
+    const world = new World()
+    const { creados, factory } = makeFactory()
+    attachSprites(world, factory)
+    expect(() => world.spawn(sprite({ key: 'hero' }))).toThrow(/Position/)
+    expect(creados).toHaveLength(0)
+  })
+
+  test('un eid reciclado no hereda la posicion del ocupante anterior', () => {
+    const world = new World()
+    const { creados, factory } = makeFactory()
+    attachSprites(world, factory)
+
+    const e1 = world.spawn(set(Position, { x: 777, y: 888 }), sprite({ key: 'a' }))
+    world.destroy(e1)
+
+    expect(() => world.spawn(sprite({ key: 'b' }))).toThrow(/Position/)
+    expect(creados.filter(s => s.x === 777 || s.y === 888)).toHaveLength(1)
+  })
+})
+
+describe('bridge: preSync no pisa el movimiento de Phaser', () => {
+  function makeFactory() {
+    const creados: ReturnType<typeof fakeSprite>[] = []
+    const factory = (key: string, x: number, y: number) => {
+      const s = fakeSprite(key, x, y)
+      creados.push(s)
+      return s as unknown as SpriteLike
+    }
+    return { creados, factory }
+  }
+
+  test('un tween que mueve el GameObject no es pisado por preSync', () => {
+    const world = new World()
+    const { creados, factory } = makeFactory()
+    attachSprites(world, factory)
+    const e = world.spawn(set(Position, { x: 0, y: 0 }), sprite({ key: 'hero' }))
+
+    world.runPreSync()
+    world.runPostSync()
+
+    // "Tween": Phaser mueve el GameObject entre frames.
+    creados[0].x = 250
+    world.runPreSync()
+    expect(creados[0].x).toBe(250)
+
+    world.runPostSync()
+    expect(Position.x[e]).toBe(250)
+
+    // Y sigue sin pisarlo en el frame siguiente.
+    creados[0].x = 260
+    world.runPreSync()
+    expect(creados[0].x).toBe(260)
+  })
+
+  test('escribir Position desde un system si mueve el GameObject', () => {
+    const world = new World()
+    const { creados, factory } = makeFactory()
+    attachSprites(world, factory)
+    world.spawn(set(Position, { x: 0, y: 0 }), sprite({ key: 'hero' }))
+
+    world.runPreSync()
+    world.runPostSync()
+
+    const e = world.query(Sprite, Position)[0]
+    Position.x[e] = 999
+    world.runPreSync()
+    expect(creados[0].x).toBe(999)
+
+    // Sin nuevas escrituras, un tween posterior sobrevive.
+    world.runPostSync()
+    creados[0].x = 1000
+    world.runPreSync()
+    expect(creados[0].x).toBe(1000)
+  })
+})
+
+describe('attachSprites: segunda llamada', () => {
+  function makeFactory() {
+    const creados: ReturnType<typeof fakeSprite>[] = []
+    const factory = (key: string, x: number, y: number) => {
+      const s = fakeSprite(key, x, y)
+      creados.push(s)
+      return s as unknown as SpriteLike
+    }
+    return { creados, factory }
+  }
+
+  test('la segunda llamada devuelve un detach que desengancha de verdad', () => {
+    const world = new World()
+    const { creados, factory } = makeFactory()
+    attachSprites(world, factory)
+    const detach = attachSprites(world, factory)
+
+    detach()
+    world.spawn(set(Position, { x: 0, y: 0 }), sprite({ key: 'hero' }))
+    expect(creados).toHaveLength(0)
+  })
+
+  test('la segunda llamada con otra factory lanza', () => {
+    const world = new World()
+    const { factory } = makeFactory()
+    const { factory: otra } = makeFactory()
+    attachSprites(world, factory)
+    expect(() => attachSprites(world, otra)).toThrow(/factory/)
+  })
+
+  test('detach de la segunda llamada permite volver a enganchar con otra factory', () => {
+    const world = new World()
+    const { factory } = makeFactory()
+    const otra = makeFactory()
+    attachSprites(world, factory)()
+    attachSprites(world, otra.factory)
+    world.spawn(set(Position, { x: 0, y: 0 }), sprite({ key: 'hero' }))
+    expect(otra.creados).toHaveLength(1)
+  })
+})
+
 describe('bridge: worlds simultaneos', () => {
   test('cada world mantiene su propio GameObject y su propio destroy', () => {
     const creadosA: ReturnType<typeof fakeSprite>[] = []

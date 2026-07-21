@@ -200,6 +200,118 @@ describe('World: reciclado de entity ids', () => {
   })
 })
 
+describe('World: hooks que se desregistran durante el run', () => {
+  test('runPreSync corre todos los hooks aunque uno quite a un hook anterior', () => {
+    const world = new World()
+    const orden: string[] = []
+    const off = world.onPreSync(() => orden.push('primero'))
+    world.onPreSync(() => {
+      orden.push('user')
+      off()
+    })
+    world.onPreSync(() => orden.push('despues'))
+    world.runPreSync()
+    expect(orden).toEqual(['primero', 'user', 'despues'])
+  })
+
+  test('runPostSync corre todos los hooks aunque uno quite a un hook anterior', () => {
+    const world = new World()
+    const orden: string[] = []
+    const off = world.onPostSync(() => orden.push('primero'))
+    world.onPostSync(() => {
+      orden.push('user')
+      off()
+    })
+    world.onPostSync(() => orden.push('despues'))
+    world.runPostSync()
+    expect(orden).toEqual(['primero', 'user', 'despues'])
+  })
+
+  test('un hook que se quita a si mismo no corre en el frame siguiente', () => {
+    const world = new World()
+    const orden: string[] = []
+    const off: (() => void)[] = []
+    off.push(
+      world.onPreSync(() => {
+        orden.push('once')
+        off[0]()
+      }),
+    )
+    world.runPreSync()
+    world.runPreSync()
+    expect(orden).toEqual(['once'])
+  })
+})
+
+describe('World: capacidad de las columnas', () => {
+  test('spawn lanza cuando el entity id excede la capacidad del componente', () => {
+    const Tiny = component(class { @f32 x = 0 }, 3)
+    const world = new World()
+    let lanzo: unknown
+    try {
+      for (let i = 0; i < 64; i++) world.spawn(set(Tiny, { x: 1 }))
+    } catch (err) {
+      lanzo = err
+    }
+    expect(lanzo).toBeInstanceOf(Error)
+    expect((lanzo as Error).message).toMatch(/capacidad/)
+    expect((lanzo as Error).message).toMatch(/3/)
+    expect((lanzo as Error).message).toMatch(/destruir/)
+  })
+
+  test('spawn de un componente con capacidad por defecto no lanza', () => {
+    const world = new World()
+    expect(() => world.spawn(set(Position, { x: 1, y: 1 }))).not.toThrow()
+  })
+})
+
+describe('World: destroy libera las referencias', () => {
+  test('destroy libera un campo @ref de un componente cualquiera', () => {
+    const Payload = component(class { @ref data!: object })
+    const world = new World()
+    const grande = { blob: new Array(10).fill('x') }
+    const e = world.spawn(set(Payload, { data: grande }))
+    expect(Payload.data[e]).toBe(grande)
+    world.destroy(e)
+    expect(Payload.data[e]).toBeUndefined()
+  })
+
+  test('destroy resetea las columnas numericas de la entidad', () => {
+    const world = new World()
+    const e = world.spawn(set(Position, { x: 123, y: 456 }))
+    world.destroy(e)
+    expect(Position.x[e]).toBe(0)
+    expect(Position.y[e]).toBe(0)
+  })
+
+  test('destroy no toca los componentes que la entidad no tiene', () => {
+    const world = new World()
+    const otro = world.spawn(set(Velocity, { x: 4, y: 4 }))
+    const e = world.spawn(set(Position, { x: 1, y: 1 }))
+    world.destroy(e)
+    expect(Velocity.x[otro]).toBe(4)
+  })
+
+  test('destruir una entidad que ya murio sigue siendo un no-op', () => {
+    const world = new World()
+    const e = world.spawn(set(Position, { x: 1, y: 1 }))
+    world.destroy(e)
+    expect(() => world.destroy(e)).not.toThrow()
+    expect(() => world.destroy(999_999)).not.toThrow()
+  })
+
+  test('los observers onRemove ven los datos de la entidad', () => {
+    const world = new World()
+    let visto = -1
+    world.onRemove(Health, eid => {
+      visto = Health.hp[eid]
+    })
+    const e = world.spawn(set(Health, { hp: 42 }))
+    world.destroy(e)
+    expect(visto).toBe(42)
+  })
+})
+
 describe('World: aislamiento entre worlds simultaneos', () => {
   test('dos worlds simultaneos no comparten entity ids', () => {
     const a = new World()

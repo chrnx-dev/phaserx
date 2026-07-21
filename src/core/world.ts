@@ -3,6 +3,8 @@ import {
   addEntity,
   createEntityIndex,
   createWorld,
+  entityExists,
+  getEntityComponents,
   hasComponent,
   observe,
   onAdd as bitOnAdd,
@@ -12,7 +14,7 @@ import {
   type World as BitWorld,
 } from 'bitecs'
 import type { Column } from './column'
-import { getDefaults } from './component'
+import { getCapacity, getDefaults } from './component'
 
 export type Entity = number
 
@@ -34,9 +36,48 @@ function isSetter(part: object | Setter): part is Setter {
   return SETTER in part
 }
 
-function removeFrom<T>(list: T[], item: T): void {
-  const i = list.indexOf(item)
-  if (i !== -1) list.splice(i, 1)
+type Hook = () => void
+
+/**
+ * Lista de hooks de frame resistente a que un hook quite a otro mientras corre.
+ *
+ * Quitar por `splice` desplaza el array in-place, y un recorrido que ya empezo
+ * se saltea al hook que ocupa el hueco (o, si se recorre hacia atras, lo corre
+ * dos veces). Escenario real y no rebuscado: el `detach` del bridge es el hook
+ * cero, y cualquier hook de usuario que lo llame silencia a los que vienen
+ * despues.
+ *
+ * La baja marca la posicion con `null` en vez de compactar, y la compactacion
+ * ocurre al terminar el recorrido. Asi los indices son estables durante todo
+ * el frame, el orden de registro se respeta y no se copia nada: el costo es un
+ * chequeo de nulidad por hook, dos veces por frame.
+ */
+type HookList = { hooks: Array<Hook | null>; holes: boolean }
+
+function addHook(list: HookList, hook: Hook): () => void {
+  list.hooks.push(hook)
+  return () => {
+    const i = list.hooks.indexOf(hook)
+    if (i !== -1) {
+      list.hooks[i] = null
+      list.holes = true
+    }
+  }
+}
+
+function runHooks(list: HookList): void {
+  const hooks = list.hooks
+  // `hooks.length` se lee en cada vuelta a proposito: un hook puede registrar
+  // otro, y ese corre en el mismo frame (era el comportamiento del for-of).
+  for (let i = 0; i < hooks.length; i++) hooks[i]?.()
+  if (!list.holes) return
+  list.holes = false
+  let w = 0
+  for (let r = 0; r < hooks.length; r++) {
+    const hook = hooks[r]
+    if (hook !== null) hooks[w++] = hook
+  }
+  hooks.length = w
 }
 
 /**
@@ -67,6 +108,29 @@ function resetToDefaults(component: object, eid: Entity): void {
 }
 
 /**
+ * Falla temprano si el entity id cae fuera de las columnas del componente.
+ *
+ * Sin este guard el desborde es completamente silencioso: escribir en un
+ * TypedArray fuera de rango es un no-op y leer devuelve `undefined`, pero las
+ * columnas `@ref` son arrays JS y si crecen. El resultado es una entidad que
+ * existe, con su GameObject creado, cuya posicion es NaN: desaparece del
+ * render sin un solo error en consola.
+ *
+ * Es una comparacion por componente por spawn, despreciable frente al costo
+ * de `addComponent`.
+ */
+function assertCapacity(component: object, eid: Entity): void {
+  const capacity = getCapacity(component)
+  if (capacity !== undefined && eid >= capacity) {
+    throw new Error(
+      `spawn: el entity id ${eid} excede la capacidad ${capacity} de las columnas del componente. ` +
+        'Los entity ids son unicos a nivel proceso y solo se reciclan al destruir la entidad: ' +
+        'la causa habitual es descartar un World (por ejemplo en scene.restart()) sin destruir antes sus entidades.',
+    )
+  }
+}
+
+/**
  * Entity index compartido por TODOS los World. Deliberado, no un descuido.
  *
  * Las columnas de un componente son estado module-level: `Position.x` es un
@@ -89,8 +153,8 @@ const sharedEntityIndex = createEntityIndex()
 export class World {
   readonly raw: BitWorld
 
-  private readonly preSyncHooks: Array<() => void> = []
-  private readonly postSyncHooks: Array<() => void> = []
+  private readonly preSyncHooks: HookList = { hooks: [], holes: false }
+  private readonly postSyncHooks: HookList = { hooks: [], holes: false }
 
   constructor() {
     this.raw = createWorld(sharedEntityIndex)
@@ -101,8 +165,7 @@ export class World {
    * Devuelve una funcion que quita el hook.
    */
   onPreSync(hook: () => void): () => void {
-    this.preSyncHooks.push(hook)
-    return () => removeFrom(this.preSyncHooks, hook)
+    return addHook(this.preSyncHooks, hook)
   }
 
   /**
@@ -110,16 +173,15 @@ export class World {
    * Devuelve una funcion que quita el hook.
    */
   onPostSync(hook: () => void): () => void {
-    this.postSyncHooks.push(hook)
-    return () => removeFrom(this.postSyncHooks, hook)
+    return addHook(this.postSyncHooks, hook)
   }
 
   runPreSync(): void {
-    for (const hook of this.preSyncHooks) hook()
+    runHooks(this.preSyncHooks)
   }
 
   runPostSync(): void {
-    for (const hook of this.postSyncHooks) hook()
+    runHooks(this.postSyncHooks)
   }
 
   /**
@@ -131,6 +193,9 @@ export class World {
    */
   spawn(...parts: (object | Setter)[]): Entity {
     const eid = addEntity(this.raw)
+    // Antes de tocar una sola columna: si el id no entra, todo lo que sigue
+    // seria escritura al vacio.
+    for (const part of parts) assertCapacity(isSetter(part) ? part.component : part, eid)
     for (const part of parts) {
       if (isSetter(part)) {
         // Resetear ANTES de aplicar los valores: el eid puede venir reciclado
@@ -170,8 +235,30 @@ export class World {
     return eid
   }
 
+  /**
+   * Destruye la entidad y devuelve sus columnas a los valores declarados.
+   *
+   * El reseteo tambien corre en `spawn` (un eid reciclado puede traer basura
+   * del ocupante anterior), pero eso no alcanza para las referencias: un
+   * objeto grande guardado en un `@ref` queda retenido para siempre si nadie
+   * vuelve a spawnear ese mismo eid con ese mismo componente. Resetear aca
+   * hace que la vida del dato termine con la de la entidad.
+   *
+   * El reseteo va DESPUES de `removeEntity` a proposito: los observers
+   * `onRemove` corren dentro de `removeEntity` y necesitan ver los datos de la
+   * entidad que se va (asi es como el bridge llega a `Sprite.go[eid].destroy()`).
+   * La lista de componentes se captura antes porque `removeEntity` la vacia,
+   * y se copia porque bitECS devuelve una referencia viva.
+   */
   destroy(entity: Entity): void {
+    // `getEntityComponents` lanza si la entidad no existe, mientras que
+    // `removeEntity` la ignora. Destruir dos veces (o destruir algo que ya
+    // murio por otro camino) es corriente en un juego, asi que se mantiene el
+    // no-op.
+    if (!entityExists(this.raw, entity)) return
+    const components = [...getEntityComponents(this.raw, entity)] as object[]
     removeEntity(this.raw, entity)
+    for (const component of components) resetToDefaults(component, entity)
   }
 
   has(entity: Entity, component: object): boolean {
