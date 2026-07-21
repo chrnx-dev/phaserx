@@ -2,6 +2,42 @@ import { type Column, drainColumns } from './column'
 
 export const DEFAULT_CAPACITY = 10_000
 
+/**
+ * Capacidad con la que se materializa cada componente que se defina de aca en
+ * mas. Ver `configureCapacity`.
+ */
+let configuredCapacity: number = DEFAULT_CAPACITY
+
+/**
+ * Fija cuantos entity ids puede direccionar cada componente.
+ *
+ * Es module-level y no un parametro de `component()` a proposito. Los entity
+ * ids se reparten desde un unico index compartido por todos los World del
+ * proceso (ver src/core/world.ts), asi que el id de una entidad no tiene
+ * relacion con cuantas entidades tienen ese componente: es la cuenta global de
+ * entidades vivas de TODAS las escenas. Una capacidad por componente seria una
+ * bomba de tiempo: un componente declarado con 4 lanzaria en su primer spawn
+ * apenas otra escena hubiera repartido cuatro ids, aunque ese componente no lo
+ * tuviera ni una entidad.
+ *
+ * Llamala UNA VEZ, antes de definir el primer componente (tipicamente en el
+ * modulo de entrada, antes de importar los componentes). Los componentes ya
+ * definidos conservan la capacidad que tenian: cambiarla a mitad de camino
+ * deja columnas de distinto largo y el guard de `spawn` pasa a depender de
+ * cual componente se mire.
+ */
+export function configureCapacity(n: number): void {
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(`configureCapacity: la capacidad debe ser un entero positivo, no ${n}`)
+  }
+  configuredCapacity = n
+}
+
+/** Capacidad vigente para los proximos `component()`. */
+export function getConfiguredCapacity(): number {
+  return configuredCapacity
+}
+
 /** Mapea la forma de instancia de la clase a su store de columnas. */
 export type SoA<T> = { [K in keyof T]: T[K] extends number ? Column : T[K][] }
 
@@ -77,11 +113,12 @@ export function getCapacity(store: object): number | undefined {
  * Si cada entidad necesita su propio objeto, declara el campo sin
  * inicializador (`@ref cfg!: object`) y pasa la instancia en el `set()` del
  * spawn.
+ *
+ * La capacidad de las columnas no es un parametro: es global al proceso y se
+ * fija con `configureCapacity()` antes de definir el primer componente.
  */
-export function component<C extends new () => unknown>(
-  cls: C,
-  capacity: number = DEFAULT_CAPACITY,
-): SoA<InstanceType<C>> {
+export function component<C extends new () => unknown>(cls: C): SoA<InstanceType<C>> {
+  const capacity = configuredCapacity
   const store: Record<string, unknown> = {}
   for (const col of drainColumns()) store[col.name] = col.make(capacity)
 

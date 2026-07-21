@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { type AssetBinding, drainAssets } from '../assets/index'
-import { bindWorld, type SystemInstance } from '../core/system'
+import { bindWorld, isSystem, type SystemInstance } from '../core/system'
 import { World } from '../core/world'
 
 export type SceneConfig = {
@@ -22,14 +22,32 @@ const metas = new WeakMap<Function, SceneMeta>()
  * Solo guarda metadata. Los miembros tipados (this.world, this.add, ...) los
  * aporta la clase base GameScene, porque un class decorator no puede agregar
  * miembros al tipo de la clase decorada.
+ *
+ * Valida que cada clase de `systems` este decorada con `@System`. El tipo
+ * `new () => SystemInstance` no alcanza: `update` es opcional, asi que
+ * practicamente cualquier clase sin argumentos lo satisface y un system al que
+ * se le olvido el decorador entra sin ruido y no corre nunca lo que se espera
+ * de el. La validacion es la unica que puede hacerse temprano —al definirse la
+ * clase, no al primer frame— y es lo que le da sentido a `@System`.
  */
 export function Scene(config: SceneConfig) {
   return function (value: Function, _ctx: ClassDecoratorContext): void {
-    metas.set(value, {
-      key: config.key,
-      systems: config.systems ?? [],
-      assets: drainAssets(),
-    })
+    const systems = config.systems ?? []
+    // El buffer se drena ANTES de validar, por el mismo motivo por el que
+    // `reject()` lo vacia en src/assets/index.ts: si la validacion lanza, la
+    // clase nunca termina de definirse y nadie mas va a drenar, asi que sus
+    // bindings se filtrarian a la proxima escena.
+    const assets = drainAssets()
+    for (const system of systems) {
+      if (!isSystem(system)) {
+        throw new Error(
+          `@Scene('${config.key}'): la clase '${system.name || '(anonima)'}' declarada en ` +
+            'systems no tiene el decorador @System. Agregale @System() sobre la declaracion ' +
+            'de la clase.',
+        )
+      }
+    }
+    metas.set(value, { key: config.key, systems, assets })
   }
 }
 

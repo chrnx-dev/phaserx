@@ -1,6 +1,7 @@
+import { getAllEntities } from 'bitecs'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { f32, i16, ref } from '../../src/core/column'
-import { component } from '../../src/core/component'
+import { component, configureCapacity, DEFAULT_CAPACITY } from '../../src/core/component'
 import { set, World } from '../../src/core/world'
 
 const Position = component(class { @f32 x = 0; @f32 y = 0 })
@@ -245,7 +246,9 @@ describe('World: hooks que se desregistran durante el run', () => {
 
 describe('World: capacidad de las columnas', () => {
   test('spawn lanza cuando el entity id excede la capacidad del componente', () => {
-    const Tiny = component(class { @f32 x = 0 }, 3)
+    configureCapacity(3)
+    const Tiny = component(class { @f32 x = 0 })
+    configureCapacity(DEFAULT_CAPACITY)
     const world = new World()
     let lanzo: unknown
     try {
@@ -256,12 +259,97 @@ describe('World: capacidad de las columnas', () => {
     expect(lanzo).toBeInstanceOf(Error)
     expect((lanzo as Error).message).toMatch(/capacidad/)
     expect((lanzo as Error).message).toMatch(/3/)
-    expect((lanzo as Error).message).toMatch(/destruir/)
+    // El mensaje nombra la causa real: el espacio de ids del proceso,
+    // compartido por todas las escenas. No culpa al usuario de no destruir
+    // entidades de un world descartado, que puede no haber pasado nunca.
+    expect((lanzo as Error).message).toMatch(/espacio de entity ids/)
+    expect((lanzo as Error).message).toMatch(/configureCapacity/)
   })
 
   test('spawn de un componente con capacidad por defecto no lanza', () => {
     const world = new World()
     expect(() => world.spawn(set(Position, { x: 1, y: 1 }))).not.toThrow()
+  })
+})
+
+describe('World: spawn es atomico', () => {
+  /** Entidades vivas del world, sin depender de que tengan tal componente. */
+  function vivas(world: World): number {
+    return getAllEntities(world.raw).length
+  }
+
+  test('el guard de capacidad no deja la entidad viva', () => {
+    configureCapacity(1)
+    const Tiny = component(class { @f32 x = 0 })
+    configureCapacity(DEFAULT_CAPACITY)
+    const world = new World()
+    // El entity index es compartido por todo el proceso y este archivo ya
+    // repartio ids de sobra, asi que el primer spawn ya excede el techo de 1.
+    expect(() => world.spawn(set(Tiny, { x: 1 }))).toThrow(/capacidad/)
+    expect(vivas(world)).toBe(0)
+  })
+
+  test('una columna inexistente no deja la entidad viva', () => {
+    const world = new World()
+    expect(() =>
+      world.spawn(set(Position, { x: 1, noExiste: 2 } as unknown as { x: number })),
+    ).toThrow(/columna 'noExiste'/)
+    expect(vivas(world)).toBe(0)
+  })
+
+  test('un observer onAdd que lanza no deja la entidad viva ni en las queries', () => {
+    const world = new World()
+    world.onAdd(Health, () => {
+      throw new Error('el observer rechaza la entidad')
+    })
+    expect(() => world.spawn(set(Position, { x: 1, y: 1 }), set(Health, { hp: 5 }))).toThrow(
+      /rechaza/,
+    )
+    expect(vivas(world)).toBe(0)
+    expect(world.query(Position)).toHaveLength(0)
+    expect(world.query(Health)).toHaveLength(0)
+  })
+
+  test('el rollback corre los onRemove, asi las capas de arriba limpian lo suyo', () => {
+    // Es el caso real del bridge: su observer onAdd de Sprite ya creo el
+    // GameObject cuando el observer de otro componente lanza. Sin onRemove
+    // ese GameObject quedaria vivo y sin dueno.
+    const world = new World()
+    const destruidos: number[] = []
+    world.onRemove(Position, eid => destruidos.push(eid))
+    world.onAdd(Health, () => {
+      throw new Error('boom')
+    })
+    let eid = -1
+    world.onAdd(Position, e => {
+      eid = e
+    })
+    expect(() => world.spawn(set(Position, { x: 1, y: 1 }), set(Health, { hp: 5 }))).toThrow(/boom/)
+    expect(destruidos).toEqual([eid])
+  })
+
+  test('el rollback devuelve las columnas ya escritas a su default', () => {
+    const world = new World()
+    let eid = -1
+    world.onAdd(Health, e => {
+      eid = e
+      throw new Error('boom')
+    })
+    expect(() => world.spawn(set(Position, { x: 111, y: 222 }), set(Health, { hp: 5 }))).toThrow()
+    expect(Position.x[eid]).toBe(0)
+    expect(Position.y[eid]).toBe(0)
+  })
+
+  test('un spawn fallido no consume el entity id', () => {
+    const world = new World()
+    const off = world.onAdd(Health, () => {
+      throw new Error('boom')
+    })
+    expect(() => world.spawn(set(Health, { hp: 1 }))).toThrow()
+    off()
+    // El id vuelve al pool: el siguiente spawn lo reusa en vez de quemarlo.
+    const e = world.spawn(set(Health, { hp: 1 }))
+    expect(world.has(e, Health)).toBe(true)
   })
 })
 

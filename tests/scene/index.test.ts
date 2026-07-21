@@ -48,6 +48,51 @@ describe('@Scene', () => {
   })
 })
 
+describe('@Scene: validacion de systems', () => {
+  test('una clase sin @System en systems lanza y nombra la clase', () => {
+    class SinDecorador {
+      update() {}
+    }
+    expect(() => {
+      @Scene({ key: 'rota', systems: [SinDecorador] })
+      class Rota {}
+      void Rota
+    }).toThrow(/SinDecorador/)
+  })
+
+  test('el error dice que falta @System', () => {
+    class Olvidadiza {}
+    expect(() => {
+      @Scene({ key: 'rota2', systems: [Olvidadiza] })
+      class Rota {}
+      void Rota
+    }).toThrow(/@System/)
+  })
+
+  test('acepta las clases decoradas con @System', () => {
+    expect(() => {
+      @Scene({ key: 'ok', systems: [Contador] })
+      class Ok {}
+      void Ok
+    }).not.toThrow()
+  })
+
+  test('una escena rechazada no filtra sus bindings de @Asset a la siguiente', () => {
+    class NoSystem {}
+    expect(() => {
+      @Scene({ key: 'rota3', systems: [NoSystem] })
+      class Rota {
+        @Asset(A.hero) hero!: Phaser.Textures.Texture
+      }
+      void Rota
+    }).toThrow()
+
+    @Scene({ key: 'limpia' })
+    class Limpia {}
+    expect(getSceneMeta(Limpia)?.assets).toEqual([])
+  })
+})
+
 describe('@Asset sin @Scene', () => {
   test('el binding huerfano lo hereda la proxima escena que si tenga @Scene', () => {
     // Documenta el modo de falla que ataca la deteccion en GameScene#create

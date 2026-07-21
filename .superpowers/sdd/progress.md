@@ -46,3 +46,11 @@ Task 11: complete (demo verificado en chromium headless: 6 sprites, enemigos con
   - defineAssets no carga nada: sin campos @Asset en la escena la textura nunca llega al loader
   - Vite con target esnext sirve los decoradores sin transpilar y el navegador muere con "Invalid or unexpected token"
   Hallazgos completos en docs/superpowers/notes/2026-07-21-demo-findings.md; a revisar antes de publicar.
+Task 11: complete (commits c325b9d..89125ec, review clean)
+  El demo destapo 3 defectos del framework, todos arreglados con mediciones antes/despues:
+  - listeners de frame acumulandose por entrada a la escena (el usuario no podia arreglarlo)
+  - ciclo de vida del world sin dueno -> World.clear()/teardown() + limpieza en SHUTDOWN
+  - sin mapeo GameObject -> entidad -> entityOf() y SpriteFactory recibe el eid
+  Entregable: docs/superpowers/notes/2026-07-21-demo-findings.md (14 hallazgos de ergonomia)
+TODAS LAS TAREAS COMPLETAS. Pendiente: review final de rama.
+Review final de rama: 6 bloqueantes arreglados (spawn atomico, README+LICENSE+import de Phaser, configureCapacity, barrel sin internos, @Scene valida @System, detach destruye GameObjects). Detalle en .superpowers/sdd/final-fix-report.md

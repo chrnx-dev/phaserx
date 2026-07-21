@@ -1,3 +1,9 @@
+// Import explicito y no el global `Phaser`: el global solo existe si el
+// consumidor no restringe `compilerOptions.types` (o lo lista a mano). Sin
+// esto, `dist/assets/index.d.ts` referencia un nombre que ese consumidor no
+// tiene y su build falla con "Cannot find name 'Phaser'".
+import type Phaser from 'phaser'
+
 export type ImageSpec = { type: 'image'; url: string }
 export type SpritesheetSpec = {
   type: 'spritesheet'

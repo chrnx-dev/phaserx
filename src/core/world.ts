@@ -125,8 +125,10 @@ function assertCapacity(component: object, eid: Entity): void {
   if (capacity !== undefined && eid >= capacity) {
     throw new Error(
       `spawn: el entity id ${eid} excede la capacidad ${capacity} de las columnas del componente. ` +
-        'Los entity ids son unicos a nivel proceso y solo se reciclan al destruir la entidad: ' +
-        'la causa habitual es descartar un World (por ejemplo en scene.restart()) sin destruir antes sus entidades.',
+        'El techo no es cuantas entidades tienen este componente, sino el espacio de entity ids ' +
+        'del proceso: hay un unico index compartido por todas las escenas vivas, y un id solo se ' +
+        'libera al destruir su entidad. Subi el techo con configureCapacity(n) antes de definir ' +
+        'los componentes, o destrui las entidades que ya no uses.',
     )
   }
 }
@@ -206,9 +208,32 @@ export class World {
    * El orden importa: los componentes se aplican de izquierda a derecha, asi
    * que un componente cuyo observer lea datos de otro (por ejemplo Sprite
    * leyendo Position) debe ir despues de ese otro.
+   *
+   * Es atomico: si algo lanza (el guard de capacidad, una columna que no
+   * existe, o el observer `onAdd` de un componente que rechaza la entidad),
+   * la entidad se destruye antes de propagar el error. Sin eso quedaria viva
+   * y a medio construir, visible en las queries y con los GameObjects que sus
+   * observers alcanzaron a crear ya enganchados a ella.
    */
   spawn(...parts: (object | Setter)[]): Entity {
     const eid = addEntity(this.raw)
+    try {
+      return this.build(eid, parts)
+    } catch (err) {
+      // `destroy` y no `removeEntity`: dispara los observers `onRemove` (asi
+      // el bridge destruye el GameObject que su `onAdd` alcanzo a crear) y
+      // devuelve las columnas ya escritas a sus defaults. Si la limpieza
+      // fallara, el error que importa sigue siendo el original.
+      try {
+        this.destroy(eid)
+      } catch {
+        /* la causa real es err */
+      }
+      throw err
+    }
+  }
+
+  private build(eid: Entity, parts: (object | Setter)[]): Entity {
     // Antes de tocar una sola columna: si el id no entra, todo lo que sigue
     // seria escritura al vacio.
     for (const part of parts) assertCapacity(isSetter(part) ? part.component : part, eid)

@@ -92,6 +92,31 @@ type Attachment = { detach: () => void; factory: SpriteFactory }
 const attached = new WeakMap<World, Attachment>()
 
 /**
+ * Destruye el GameObject de la entidad y suelta todo lo que el bridge guardaba
+ * de ella.
+ *
+ * Lo comparten los dos caminos por los que un GameObject deja de tener dueno:
+ * el observer `onRemove` (la entidad muere con el bridge enganchado) y
+ * `detach` (el bridge se suelta con la entidad todavia viva). Es idempotente:
+ * despues de la primera pasada `Sprite.go[eid]` esta vacio.
+ */
+function releaseSprite(eid: Entity): void {
+  const go = Sprite.go[eid]
+  if (go !== undefined) {
+    // El mapeo se borra antes de destruir: un handler de `destroy` que
+    // consulte `entityOf` debe ver ya la entidad como ida, no como viva.
+    entities.delete(go)
+    go.destroy()
+  }
+  // Liberar las referencias: sin esto el array retiene el GameObject y la
+  // entidad reciclada heredaria el sprite del ocupante anterior.
+  delete Sprite.go[eid]
+  delete Sprite.key[eid]
+  delete shadowX[eid]
+  delete shadowY[eid]
+}
+
+/**
  * Conecta el ciclo de vida de los GameObjects al del world.
  *
  * Es idempotente: llamarla de nuevo sobre un world ya enganchado no duplica
@@ -102,6 +127,9 @@ const attached = new WeakMap<World, Attachment>()
  * seguir usando la vieja en silencio haria que un restart con otra factory
  * pareciera funcionar y creara los GameObjects en la escena equivocada.
  * Para cambiar de factory hay que llamar a `detach()` primero.
+ *
+ * El `detach()` que devuelve destruye los GameObjects que sigan vivos antes de
+ * desengancharse: las entidades sobreviven, pero se quedan sin GameObject.
  */
 export function attachSprites(world: World, factory: SpriteFactory): () => void {
   const previo = attached.get(world)
@@ -150,25 +178,21 @@ export function attachSprites(world: World, factory: SpriteFactory): () => void 
     shadowY[eid] = Position.y[eid]
   })
 
-  const offRemove = world.onRemove(Sprite, eid => {
-    const go = Sprite.go[eid]
-    if (go !== undefined) {
-      // El mapeo se borra antes de destruir: un handler de `destroy` que
-      // consulte `entityOf` debe ver ya la entidad como ida, no como viva.
-      entities.delete(go)
-      go.destroy()
-    }
-    // Liberar las referencias: sin esto el array retiene el GameObject y la
-    // entidad reciclada heredaria el sprite del ocupante anterior.
-    delete Sprite.go[eid]
-    delete Sprite.key[eid]
-    delete shadowX[eid]
-    delete shadowY[eid]
-  })
+  const offRemove = world.onRemove(Sprite, eid => releaseSprite(eid))
 
   const detach = () => {
     if (attached.get(world)?.detach !== detach) return
     attached.delete(world)
+    // Los GameObjects que sigan vivos se destruyen ACA, antes de dar de baja
+    // el observer que los destruia. Al desengancharse se pierde la unica via
+    // que quedaba para llegar a ellos: `onRemove` deja de correr y el reset de
+    // columnas de `destroy` borra `Sprite.go`, asi que un detach que no los
+    // destruyera dejaria un GameObject huerfano por entidad viva, todavia
+    // dibujandose y sin dueno. Es la fuga numero uno del bridge.
+    //
+    // La lista se copia porque `world.query` devuelve la referencia viva que
+    // bitECS muta.
+    for (const eid of [...world.query(Sprite)]) releaseSprite(eid)
     offPreSync()
     offPostSync()
     offAdd()
@@ -180,7 +204,8 @@ export function attachSprites(world: World, factory: SpriteFactory): () => void 
   // (GameScene, en el SHUTDOWN de Phaser) llama a `world.teardown()` y no tiene
   // que conocer al bridge, que es una capa de arriba: quien engancha es quien
   // sabe como desenganchar. El usuario que quiera soltarlo antes sigue teniendo
-  // el `detach` que devuelve esta funcion, y llamarlo tambien quita este hook.
+  // el `detach` que devuelve esta funcion, y llamarlo tambien quita este hook y
+  // destruye los GameObjects que quedaran vivos.
   const offTeardown = world.onTeardown(() => detach())
   attached.set(world, { detach, factory })
   return detach

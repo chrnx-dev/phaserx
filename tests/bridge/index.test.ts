@@ -429,6 +429,85 @@ describe('bridge: mapeo GameObject -> entidad', () => {
   })
 })
 
+describe('detach: no deja GameObjects huerfanos', () => {
+  function engancharCon(world: World) {
+    const creados: ReturnType<typeof fakeSprite>[] = []
+    const detach = attachSprites(world, (key, x, y) => {
+      const s = fakeSprite(key, x, y)
+      creados.push(s)
+      return s as unknown as SpriteLike
+    })
+    return { creados, detach }
+  }
+
+  test('destruye el GameObject de una entidad viva', () => {
+    const world = new World()
+    const { creados, detach } = engancharCon(world)
+    world.spawn(set(Position, { x: 0, y: 0 }), sprite({ key: 'hero' }))
+    expect(creados[0].destroyed).toBe(false)
+    detach()
+    expect(creados[0].destroyed).toBe(true)
+  })
+
+  test('destruye los GameObjects de todas las entidades vivas', () => {
+    const world = new World()
+    const { creados, detach } = engancharCon(world)
+    for (let i = 0; i < 3; i++) world.spawn(set(Position, { x: i, y: i }), sprite({ key: 'hero' }))
+    detach()
+    expect(creados.map(c => c.destroyed)).toEqual([true, true, true])
+  })
+
+  test('libera las referencias del bridge a los GameObjects', () => {
+    const world = new World()
+    const { creados, detach } = engancharCon(world)
+    const e = world.spawn(set(Position, { x: 0, y: 0 }), sprite({ key: 'hero' }))
+    detach()
+    expect(Sprite.go[e]).toBeUndefined()
+    expect(Sprite.key[e]).toBeUndefined()
+    expect(entityOf(creados[0])).toBeUndefined()
+  })
+
+  test('las entidades sobreviven al detach: solo pierden su GameObject', () => {
+    const world = new World()
+    const { detach } = engancharCon(world)
+    const e = world.spawn(set(Position, { x: 3, y: 4 }), sprite({ key: 'hero' }))
+    detach()
+    expect(world.has(e, Position)).toBe(true)
+    expect(Position.x[e]).toBe(3)
+  })
+
+  test('destruir la entidad despues del detach no vuelve a destruir el GameObject', () => {
+    const world = new World()
+    const { creados, detach } = engancharCon(world)
+    const e = world.spawn(set(Position, { x: 0, y: 0 }), sprite({ key: 'hero' }))
+    detach()
+    creados[0].destroyed = false
+    world.destroy(e)
+    expect(creados[0].destroyed).toBe(false)
+  })
+
+  test('el teardown no destruye dos veces: las entidades ya cayeron antes del detach', () => {
+    const world = new World()
+    const { creados, detach } = engancharCon(world)
+    void detach
+    world.spawn(set(Position, { x: 0, y: 0 }), sprite({ key: 'hero' }))
+    let destruccion = 0
+    creados[0].destroy = function (this: { destroyed: boolean }) {
+      destruccion++
+      this.destroyed = true
+    }
+    world.teardown()
+    expect(destruccion).toBe(1)
+  })
+
+  test('detach sobre un world sin entidades es un no-op', () => {
+    const world = new World()
+    const { detach } = engancharCon(world)
+    expect(() => detach()).not.toThrow()
+    expect(() => detach()).not.toThrow()
+  })
+})
+
 describe('attachSprites: limpieza por teardown del world', () => {
   test('world.teardown() desengancha el bridge', () => {
     const world = new World()

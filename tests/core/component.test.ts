@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'vitest'
 import { f32, i16, ref, u8 } from '../../src/core/column'
-import { component, DEFAULT_CAPACITY, getDefaults } from '../../src/core/component'
+import {
+  component,
+  configureCapacity,
+  DEFAULT_CAPACITY,
+  getConfiguredCapacity,
+  getDefaults,
+} from '../../src/core/component'
 
 describe('component()', () => {
   test('crea una columna TypedArray por campo', () => {
@@ -31,9 +37,28 @@ describe('component()', () => {
     expect(Object.keys(B)).toEqual(['y'])
   })
 
-  test('acepta capacidad personalizada', () => {
-    const Small = component(class { @f32 x = 0 }, 16)
+  test('usa la capacidad configurada al momento de definirse', () => {
+    configureCapacity(16)
+    const Small = component(class { @f32 x = 0 })
+    configureCapacity(DEFAULT_CAPACITY)
     expect(Small.x.length).toBe(16)
+  })
+
+  test('los componentes ya definidos conservan su capacidad', () => {
+    const Antes = component(class { @f32 x = 0 })
+    configureCapacity(8)
+    const Despues = component(class { @f32 x = 0 })
+    configureCapacity(DEFAULT_CAPACITY)
+    expect(Antes.x.length).toBe(DEFAULT_CAPACITY)
+    expect(Despues.x.length).toBe(8)
+  })
+
+  test('configureCapacity rechaza valores que no sean enteros positivos', () => {
+    expect(() => configureCapacity(0)).toThrow(/entero positivo/)
+    expect(() => configureCapacity(-5)).toThrow(/entero positivo/)
+    expect(() => configureCapacity(1.5)).toThrow(/entero positivo/)
+    // Un rechazo no cambia la capacidad vigente.
+    expect(getConfiguredCapacity()).toBe(DEFAULT_CAPACITY)
   })
 
   test('un componente sin campos es un objeto vacio usable como tag', () => {
