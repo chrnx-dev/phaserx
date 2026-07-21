@@ -51,3 +51,22 @@ export const i32 = numericColumn(n => new Int32Array(n))
 export const u8 = numericColumn(n => new Uint8Array(n))
 export const u16 = numericColumn(n => new Uint16Array(n))
 export const u32 = numericColumn(n => new Uint32Array(n))
+
+/**
+ * Campo por referencia: array plano indexado por entity id.
+ *
+ * El tipo del campo se restringe a `object | string` a proposito. Un campo
+ * numerico marcado con @ref se mapearia a `Column` en `SoA<T>` mientras que
+ * en runtime seria un array plano, y el tipo mentiria. Para numeros existen
+ * f32/i16/u8/etc.
+ */
+export function ref<T, V extends object | string>(
+  _value: undefined,
+  ctx: ClassFieldDecoratorContext<T, V>,
+) {
+  // Mismo rechazo con descarte que los decoradores numericos: si esta clase
+  // no va a llegar a component(), su batch no debe contaminar al siguiente.
+  if (ctx.static) reject('@ref', ctx.name, 'no puede ser static')
+  if (ctx.private) reject('@ref', ctx.name, 'no puede ser privado')
+  pending.push({ name: String(ctx.name), make: () => [] })
+}
