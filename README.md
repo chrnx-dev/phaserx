@@ -367,6 +367,24 @@ direcciones y al morir se cambia de escena. `demo/verify/lifecycle.mjs` y
 `demo/verify/reentry.mjs` miden con Playwright que no queden GameObjects
 huerfanos ni listeners duplicados al cambiar y re-entrar a una escena.
 
+## Versionado
+
+PhaserX usa CalVer con el formato `YY.M.PATCH`, mas un sufijo de preestreno
+opcional: `-alpha.N`, `-beta.N` o `-rc.N`.
+
+```
+26.7.0-alpha.0
+││ │ │  └─ preestreno: alpha -> beta -> rc -> estable
+││ │ └──── patch: correcciones dentro del mismo mes
+││ └────── mes de publicacion, sin cero a la izquierda
+└└──────── ano de publicacion, dos digitos
+```
+
+La version dice **cuando** se publico, no cuanto cambio la API. Mientras haya
+sufijo `-alpha` la superficie publica puede romperse entre releases sin aviso:
+lo que falta esta en [KNOWN-ISSUES.md](KNOWN-ISSUES.md). Fijala exacta si te
+importa la estabilidad.
+
 ## Licencia
 
 MIT. Ver [LICENSE](./LICENSE).

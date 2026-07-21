@@ -1,6 +1,6 @@
 {
   "name": "phaserx",
-  "version": "0.1.0",
+  "version": "26.7.0-alpha.0",
   "description": "Decorator-powered ECS framework on top of Phaser 4",
   "type": "module",
   "main": "./dist/index.js",

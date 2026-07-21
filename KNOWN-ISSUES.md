@@ -1,4 +1,4 @@
-# Limitaciones conocidas — v0.1
+# Limitaciones conocidas — 26.7.0-alpha.0
 
 Nada de esto rompe el demo ni los tests. Es lo que sabemos que falta o incomoda,
 anotado para no redescubrirlo. Cada punto se verificó empíricamente.

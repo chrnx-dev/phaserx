@@ -1,4 +1,4 @@
-export const VERSION = '0.1.0'
+export const VERSION = '26.7.0-alpha.0'
 
 export { f32, f64, i8, i16, i32, ref, u8, u16, u32 } from './core/column'
 export type { Column } from './core/column'
