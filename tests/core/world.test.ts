@@ -8,6 +8,8 @@ const Velocity = component(class { @f32 x = 0; @f32 y = 0 })
 const Health = component(class { @i16 hp = 0 })
 const Label = component(class { @ref text!: string })
 const Enemy = component(class {})
+const TrickyValues = component(class { @ref values!: string })
+const TrickyComponent = component(class { @ref component!: string })
 
 describe('World', () => {
   let world: World
@@ -74,5 +76,26 @@ describe('World', () => {
     })
     world.spawn(set(Health, { hp: 77 }))
     expect(visto).toBe(77)
+  })
+
+  test('spawn no confunde un componente con columna "values" o "component" con un Setter', () => {
+    // Como componente crudo (tag): no debe entrar en la rama de Setter ni
+    // lanzar, aunque el store tenga una clave literalmente llamada 'values'
+    // o 'component'.
+    const eRawValues = world.spawn(TrickyValues)
+    expect(world.has(eRawValues, TrickyValues)).toBe(true)
+
+    const eRawComponent = world.spawn(TrickyComponent)
+    expect(world.has(eRawComponent, TrickyComponent)).toBe(true)
+
+    // Envuelto en set(): debe escribir la columna correctamente en vez de
+    // confundirse con su propio nombre de columna.
+    const eSetValues = world.spawn(set(TrickyValues, { values: 'hola' }))
+    expect(TrickyValues.values[eSetValues]).toBe('hola')
+    expect(world.has(eSetValues, TrickyValues)).toBe(true)
+
+    const eSetComponent = world.spawn(set(TrickyComponent, { component: 'mundo' }))
+    expect(TrickyComponent.component[eSetComponent]).toBe('mundo')
+    expect(world.has(eSetComponent, TrickyComponent)).toBe(true)
   })
 })
