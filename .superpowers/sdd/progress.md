@@ -28,3 +28,21 @@ Task 8: complete (commits fb3b4cb..5fa713d, review clean; 3 fixes Important)
   Minor pendientes para el review final:
   - comentario dice "boot de la escena" donde Phaser en realidad registra en start()
   - la deteccion de bindings huerfanos no cubre colision de nombre de propiedad
+Task 9: complete (commits 5fa713d..eeecce0, review clean tras 3 rondas)
+  Cerrados: 4 Critical (eid reciclado hereda datos, colision entre worlds, attachSprites no idempotente,
+  lectura ciega de Position en onAdd) + capacidad silenciosa + preSync pisando tweens + @ref retenido en destroy.
+  Cambios de diseno: defaults capturados de la clase de declaracion, entity index compartido entre worlds,
+  hooks con desuscripcion, dirty-check por sombra en preSync.
+  Deuda anotada para el review final:
+  - L (Important): el parametro `capacity` de component() quedo semanticamente roto por el entity index
+    compartido; bajarlo del default es una bomba de tiempo y el mensaje de error atribuye una causa falsa.
+    Opciones: quitar el parametro, o documentar que solo tiene sentido subirlo.
+  - K: reentrada en runHooks corre hooks dos veces (no alcanzable desde el bridge ni GameScene)
+  - M: detach() no destruye los GameObjects vivos y destroy() ya no puede alcanzarlos
+  - N: spawn(sprite(...)) sin attachSprites no crea GameObject y no avisa
+Task 10: complete (commits eeecce0..e52953d, review clean)
+Task 11: complete (demo verificado en chromium headless: 6 sprites, enemigos convergen, flechas mueven al jugador, consola limpia)
+  Dos huecos del framework que rompian el demo tal como lo escribia el brief:
+  - defineAssets no carga nada: sin campos @Asset en la escena la textura nunca llega al loader
+  - Vite con target esnext sirve los decoradores sin transpilar y el navegador muere con "Invalid or unexpected token"
+  Hallazgos completos en docs/superpowers/notes/2026-07-21-demo-findings.md; a revisar antes de publicar.
