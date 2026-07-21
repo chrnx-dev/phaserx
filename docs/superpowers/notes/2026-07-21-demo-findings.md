@@ -33,9 +33,12 @@ nivel modulo.
 
 Primer intento de correr el demo: canvas ausente y un unico `Invalid or unexpected
 token` en consola, sin archivo ni linea utiles. Causa: el target por defecto de Vite
-en dev es `esnext`, con lo cual esbuild deja los decoradores tal cual en el modulo
-servido, y ningun navegador los implementa todavia. Hay que forzar
-`esbuild: { target: 'es2022' }` (y el equivalente en `optimizeDeps` y `build`).
+en dev es `esnext`, con lo cual esbuild deja los decoradores stage-3 tal cual en el
+modulo servido. Lo verificado es que **Chromium 141** (el que trae Playwright 1.61,
+que es donde se corren los scripts de `demo/verify/`) no parsea ese modulo. No se
+probo ningun otro navegador, asi que el alcance real del problema queda abierto; lo
+que si es concreto es que con la config default de Vite el demo no arranca. Hay que
+forzar `esbuild: { target: 'es2022' }` (y el equivalente en `optimizeDeps` y `build`).
 
 Es un requisito de instalacion del framework entero, no del demo, y hoy no esta
 escrito en ningun lado. Deberia estar en el README junto al `tsconfig` minimo, o
@@ -164,6 +167,130 @@ engancha sola al `SHUTDOWN`, o hay que exponer un `onShutdown()` para que el usu
 tenga donde poner la limpieza. Tal como esta, el valor de retorno se descarta y el
 usuario ni se entera de que habia algo que limpiar.
 
+---
+
+Los tres que siguen salieron de la segunda vuelta, la que agrego colisiones, muerte y
+cambio de escena al demo. Todos tienen medicion en navegador; los scripts que las
+producen estan en `demo/verify/` y se corren con `node demo/verify/lifecycle.mjs` y
+`node demo/verify/reentry.mjs`.
+
+## 12. El ciclo de vida de escena no tiene dueno: la limpieza queda entera en el usuario
+
+Es la continuacion del 11, pero medida, y es el hallazgo mas caro de los tres.
+`GameScene` no engancha **nada** al `SHUTDOWN` de Phaser. Cuando una escena de
+PhaserX termina, Phaser hace su parte (destruye el display list, y con el los
+GameObjects) y el world queda intacto: las entidades siguen vivas, el bridge sigue
+enganchado, y `Sprite.go` sigue apuntando a GameObjects que ya no existen.
+
+Lo que hay que escribir a mano en cada escena, hoy, es esto, y el orden no es
+negociable:
+
+```ts
+const detach = attachSprites(this.world, (key, x, y) => this.physics.add.sprite(x, y, key))
+this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+  for (const e of [...this.world.query(Position)]) this.world.destroy(e)  // primero
+  detach()                                                                // despues
+})
+```
+
+Tres cosas que el usuario tiene que deducir solo, ninguna documentada:
+
+- **Destruir antes de `detach()`.** Al reves, el observer `onRemove` del bridge ya no
+  esta y cada entidad deja su `Sprite.go` y sus sombras de posicion colgadas para
+  siempre.
+- **No hay forma de decir "todas las entidades".** `World` no tiene `clear()` ni
+  `destroyAll()`, y `query()` exige al menos un componente. El demo consulta por
+  `Position` y funciona solo porque en el demo toda entidad tiene `Position`.
+- **La copia con spread es obligatoria** (`[...this.world.query(...)]`): `query()`
+  devuelve el array vivo de bitECS y `destroy()` lo muta mientras se lo recorre.
+
+**Medicion del costo de olvidarse.** Se desactivo el bloque de limpieza y se
+volvieron a correr los mismos scripts:
+
+| | con la limpieza | sin la limpieza |
+|---|---|---|
+| entidades del world al apagar la escena | 0 | 6 |
+| referencias `Sprite.go` vivas tras la transicion (con 1 sprite real en pantalla) | 1 | 4 |
+| eid de la entidad de la escena nueva | 3 (reciclado del world viejo) | 5 (los eids de la escena vieja quedan tomados para siempre) |
+| volver a entrar a la escena | funciona | **lanza**: `attachSprites: el world ya esta enganchado con otra factory` |
+
+La ultima fila es la peor: sin `detach()`, la segunda entrada a la escena muere
+adentro de `GameScene#create()`, porque `onCreate()` construye una factory nueva
+(es un arrow literal) y el bridge, correctamente, se niega a re-enganchar. O sea que
+el usuario que ignora el valor de retorno de `attachSprites` (que es lo que invita a
+hacer una API que devuelve algo sin decir para que) tiene un juego que funciona hasta
+la primera vez que alguien vuelve a un nivel.
+
+Y la fila de los eids importa por lo que dice `src/core/world.ts`: el entity index es
+**compartido por todos los World** y las columnas son buffers de modulo con capacidad
+fija. Entidades que no se destruyen no devuelven su eid, asi que cada transicion de
+escena consume espacio de ids de forma permanente hasta llegar al error de capacidad.
+
+Lo que falta es un dueno: que `GameScene` enganche el `SHUTDOWN` por su cuenta
+(destruir el world y soltar el bridge), o al menos un `onShutdown?()` simetrico con
+`onCreate()`. El framework ya tiene todas las piezas (`detach`, `destroy`,
+`resetToDefaults`); lo unico que falta es el lugar donde llamarlas.
+
+## 13. `GameScene` acumula un listener de frame por cada entrada a la escena
+
+`GameScene#create()` hace `this.events.on(PRE_UPDATE, ...)` y `on(POST_UPDATE, ...)`
+y nunca los da de baja. `Systems#shutdown()` de Phaser solo remueve los eventos de
+transicion, no los de frame, y el emitter sobrevive al shutdown. Entonces cada vez que
+se vuelve a entrar a la escena se suma un par de listeners, y con el un pase completo
+de `runSystems` + `preSync` (y otro de `postSync`) por frame.
+
+Medido con `demo/verify/reentry.mjs`, entrando y saliendo cuatro veces:
+
+```
+listeners de PRE_UPDATE por numero de entrada:  [5, 6, 7, 8]
+postupdate, primera vs segunda entrada:          2 -> 3
+```
+
+(el 5 inicial incluye los listeners propios de Phaser y el del teclado del demo; lo
+que importa es el +1 por entrada, que es el de `GameScene`).
+
+El sintoma no es un crash sino un juego que se pone raro despues de un rato: los
+systems corren N veces por frame. Lo que **no** se duplica es la velocidad de las
+entidades, porque `preSync` escribe `body.velocity` de forma idempotente y el step de
+fisica sigue siendo uno por frame; pero cualquier system con efecto acumulativo
+(timers, cooldowns, dano por tick, spawns) si se multiplica, y en silencio.
+
+Por esto el demo no ofrece "reiniciar" desde la pantalla de game over: seria vender
+como funcionalidad un camino que el framework todavia no sostiene.
+
+La correccion es trivial y va del lado del framework: guardar las dos funciones y
+darlas de baja en un `this.events.once(SHUTDOWN, ...)`. El usuario no puede hacerlo
+por su cuenta, porque los handlers son closures anonimas dentro de `create()`: lo
+unico a su alcance es `events.off(PRE_UPDATE)` sin argumentos, que se lleva puestos
+tambien los listeners de Phaser y los suyos propios.
+
+## 14. De un GameObject no se puede volver a la entidad
+
+Todo lo que la fisica de Phaser reporta esta en GameObjects (`overlap`, `collider`,
+`pointerdown`), y todo lo que el ECS entiende son eids. El bridge no ofrece ninguna
+de las dos direcciones del mapeo: no hay `entityOf(go)`, y la `SpriteFactory` recibe
+`(key, x, y)` sin el eid, asi que ni siquiera en el momento de crear el GameObject se
+sabe para quien es.
+
+El demo lo resuelve como puede, y el resultado es feo en los dos extremos:
+
+```ts
+const go = Sprite.go[e] as unknown as Phaser.Physics.Arcade.Sprite  // doble cast
+go.setData('eid', e)
+// ...
+const eid = a.getData('eid') as Entity                              // y otro cast
+```
+
+El `as unknown as` es inevitable porque `Sprite.go` esta tipado como `SpriteLike`
+(la interfaz minima que el bridge usa para testear sin canvas), que no es
+estructuralmente compatible con un `Phaser.GameObjects.Sprite`. La decision de tipar
+el bridge contra `SpriteLike` esta bien; lo que falta es un generico o un helper que
+le devuelva al usuario el tipo que su factory realmente produce.
+
+Arreglos posibles, de menor a mayor: pasarle el eid a la factory
+(`(key, x, y, eid) => ...`), exponer `entityOf(go)` en el bridge, o que el bridge
+escriba el eid en el `data` del GameObject por su cuenta.
+
 ## Lo que si funciono bien
 
 - El error de `Sprite` sin `Position` dice literalmente que hacer y donde. Es el
@@ -174,3 +301,15 @@ usuario ni se entera de que habia algo que limpiar.
   `{ x: 'a' }` los agarra `tsc`.
 - `component(class { @f32 x = 0 })` como funcion y no como decorador de clase: el
   store queda con tipos utiles (`Position.x[e]` es `number`) sin ningun cast.
+- El `onRemove` del bridge no se equivoca nunca. En las 41 muestras que toma
+  `lifecycle.mjs` durante una partida entera (con muertes de entidades en el medio)
+  el numero de entidades y el de GameObjects del display list coinciden siempre:
+  destruir la entidad destruye el sprite en el mismo paso, sin frames intermedios
+  donde uno sobreviva al otro.
+- Los eids reciclados entre escenas arrancan limpios de verdad. La entidad sonda de
+  la segunda escena reusa un eid de la primera (medido: eid 3, que en la escena
+  anterior estaba en `(374, 268)`) y nace exactamente en su spawn point `(400, 380)`.
+  El reseteo de columnas de `spawn`/`destroy` hace lo que promete.
+- La idempotencia de `attachSprites` y su error al recibir otra factory no son
+  paranoia: son justo lo que convierte "olvide el detach" en una excepcion con
+  instrucciones en vez de en dos observers duplicados creando GameObjects huerfanos.
