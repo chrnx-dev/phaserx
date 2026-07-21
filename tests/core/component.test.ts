@@ -40,4 +40,37 @@ describe('component()', () => {
     const Tag = component(class {})
     expect(Object.keys(Tag)).toEqual([])
   })
+
+  test('un campo static es rechazado y aborta la definicion de la clase', () => {
+    expect(() => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      class Bad {
+        @f32 leaked = 0
+        @f32 static bad = 0
+      }
+    }).toThrow(/static/)
+  })
+
+  test('un campo privado es rechazado y aborta la definicion de la clase', () => {
+    expect(() => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      class Bad {
+        @f32 leaked = 0
+        @f32 #bad = 0
+      }
+    }).toThrow(/privado/)
+  })
+
+  test('una clase rechazada no filtra sus columnas al siguiente componente', () => {
+    expect(() => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      class Bad {
+        @f32 leaked = 0
+        @f32 static bad = 0
+      }
+    }).toThrow()
+
+    const Good = component(class { @f32 x = 0 })
+    expect(Object.keys(Good)).toEqual(['x'])
+  })
 })

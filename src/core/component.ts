@@ -13,7 +13,7 @@ export type SoA<T> = { [K in keyof T]: T[K] extends number ? Column : T[K][] }
  * daria `Property 'x' does not exist on type 'typeof Position'` en cada
  * acceso. Verificado con tsc --strict.
  */
-export function component<C extends new () => any>(
+export function component<C extends new () => unknown>(
   cls: C,
   capacity: number = DEFAULT_CAPACITY,
 ): SoA<InstanceType<C>> {

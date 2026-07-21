@@ -22,10 +22,23 @@ export function drainColumns(): ColumnSpec[] {
   return cols
 }
 
+/**
+ * Rechaza un campo invalido descartando el batch en curso.
+ *
+ * Si un field decorator lanza, la clase nunca termina de definirse y por lo
+ * tanto nunca llega a `component()`, asi que nadie drena el buffer. Sin este
+ * descarte las columnas ya acumuladas de esa clase se filtrarian al proximo
+ * componente que se defina, que puede ser uno totalmente ajeno.
+ */
+function reject(who: string, name: string | symbol, why: string): never {
+  pending = []
+  throw new Error(`${who}: '${String(name)}' ${why}`)
+}
+
 function numericColumn(make: (capacity: number) => unknown) {
   return function <T>(_value: undefined, ctx: ClassFieldDecoratorContext<T, number>) {
-    if (ctx.static) throw new Error(`@column: '${String(ctx.name)}' no puede ser static`)
-    if (ctx.private) throw new Error(`@column: '${String(ctx.name)}' no puede ser privado`)
+    if (ctx.static) reject('@column', ctx.name, 'no puede ser static')
+    if (ctx.private) reject('@column', ctx.name, 'no puede ser privado')
     pending.push({ name: String(ctx.name), make })
   }
 }
