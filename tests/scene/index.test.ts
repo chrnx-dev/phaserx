@@ -1,12 +1,3 @@
-// @vitest-environment jsdom
-//
-// El paquete `phaser` ejecuta deteccion de dispositivo (window, document,
-// Image, canvas...) en el top-level de su modulo. Bajo el entorno 'node'
-// (el default de este proyecto, ver vitest.config.ts) esa deteccion revienta
-// con ReferenceError apenas se importa `src/scene/index.ts`, aunque el test
-// nunca instancie GameScene. jsdom es la unica pieza de este archivo que
-// necesita ese DOM minimo; el resto de la suite sigue en 'node'.
-import './setup'
 import { describe, expect, test } from 'vitest'
 import { f32 } from '../../src/core/column'
 import { component } from '../../src/core/component'
@@ -54,6 +45,27 @@ describe('@Scene', () => {
   test('una clase sin @Scene no tiene metadata', () => {
     class Suelta {}
     expect(getSceneMeta(Suelta)).toBeUndefined()
+  })
+})
+
+describe('@Asset sin @Scene', () => {
+  test('el binding huerfano lo hereda la proxima escena que si tenga @Scene', () => {
+    // Documenta el modo de falla que ataca la deteccion en GameScene#create
+    // (ver Hallazgo 2): esta clase declara @Asset pero se olvida el
+    // decorador @Scene, asi que nunca dreno el buffer. drainAssets() nunca
+    // corrio para ella.
+    class Olvidada {
+      @Asset(A.hero) hero!: Phaser.Textures.Texture
+    }
+    void Olvidada
+
+    // La proxima clase que si tiene @Scene, aunque no declare ningun @Asset
+    // propio, se lleva por delante el binding huerfano al construir su
+    // metadata.
+    @Scene({ key: 'siguiente' })
+    class Siguiente {}
+
+    expect(getSceneMeta(Siguiente)?.assets).toEqual([{ property: 'hero', spec: A.hero }])
   })
 })
 

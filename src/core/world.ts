@@ -35,8 +35,29 @@ function isSetter(part: object | Setter): part is Setter {
 export class World {
   readonly raw: BitWorld
 
+  private readonly preSyncHooks: Array<() => void> = []
+  private readonly postSyncHooks: Array<() => void> = []
+
   constructor() {
     this.raw = createWorld()
+  }
+
+  /** Registra trabajo que corre antes del step de fisica de Phaser. */
+  onPreSync(hook: () => void): void {
+    this.preSyncHooks.push(hook)
+  }
+
+  /** Registra trabajo que corre despues del step de fisica de Phaser. */
+  onPostSync(hook: () => void): void {
+    this.postSyncHooks.push(hook)
+  }
+
+  runPreSync(): void {
+    for (const hook of this.preSyncHooks) hook()
+  }
+
+  runPostSync(): void {
+    for (const hook of this.postSyncHooks) hook()
   }
 
   /**

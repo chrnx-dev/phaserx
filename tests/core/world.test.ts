@@ -98,4 +98,25 @@ describe('World', () => {
     expect(TrickyComponent.component[eSetComponent]).toBe('mundo')
     expect(world.has(eSetComponent, TrickyComponent)).toBe(true)
   })
+
+  test('runPreSync corre los hooks registrados con onPreSync en orden', () => {
+    const order: string[] = []
+    world.onPreSync(() => order.push('a'))
+    world.onPreSync(() => order.push('b'))
+    world.runPreSync()
+    expect(order).toEqual(['a', 'b'])
+  })
+
+  test('runPostSync corre los hooks registrados con onPostSync en orden', () => {
+    const order: string[] = []
+    world.onPostSync(() => order.push('a'))
+    world.onPostSync(() => order.push('b'))
+    world.runPostSync()
+    expect(order).toEqual(['a', 'b'])
+  })
+
+  test('runPreSync y runPostSync no fallan sin hooks registrados', () => {
+    expect(() => world.runPreSync()).not.toThrow()
+    expect(() => world.runPostSync()).not.toThrow()
+  })
 })

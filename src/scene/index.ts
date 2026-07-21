@@ -94,16 +94,46 @@ export abstract class GameScene extends Phaser.Scene {
   create(): void {
     for (const { property, spec } of this.meta.assets) {
       const target = this as unknown as Record<string, unknown>
+      // Con useDefineForClassFields (tsconfig strict) un campo `@Asset`
+      // declarado por esta clase se emite como propiedad propia de la
+      // instancia, asi que 'in' da true para el. Un binding que nombra una
+      // propiedad ausente no puede venir de esta clase: es huerfano porque
+      // pertenece a otra clase que declaro @Asset sin @Scene, y por lo
+      // tanto nunca dreno el buffer (ver src/assets/index.ts) — el proximo
+      // @Scene que se definio, esta, se lo llevo por delante.
+      if (!(property in target)) {
+        throw new Error(
+          `${this.constructor.name}: el binding de @Asset para la propiedad '${property}' ` +
+            `(asset '${spec.key}') no corresponde a esta clase. Probablemente otra clase ` +
+            `declaro @Asset sin el decorador @Scene, y este binding quedo huerfano en el ` +
+            `buffer hasta que la proxima @Scene lo heredo.`,
+        )
+      }
       target[property] =
         spec.type === 'audio' ? this.sound.add(spec.key) : this.textures.get(spec.key)
     }
     this.systems = this.meta.systems.map(S => new S())
     this.onCreate?.()
-  }
 
-  update(_time: number, delta: number): void {
-    runSystems(this.systems, this.world, delta)
-    this.onUpdate?.(delta / 1000)
+    // No se puede usar update() para esto: Systems#step() de Phaser emite
+    // PRE_UPDATE, luego UPDATE (donde ArcadePhysics engancha su propio
+    // world.update), luego recien llama a scene.update(), y por ultimo
+    // emite POST_UPDATE (donde ArcadePhysics engancha world.postUpdate). O
+    // sea que update() corre DESPUES del step de fisica: desde ahi no hay
+    // forma de anteponer PreSync ni intercalar PostSync antes del proximo
+    // frame. Enganchando PRE_UPDATE y POST_UPDATE directamente logramos el
+    // orden que pide el proyecto: systems -> PreSync -> fisica -> PostSync.
+    // ArcadePhysics registra su listener de POST_UPDATE durante el boot de
+    // la escena (antes de que create() corra), asi que en ese evento su
+    // callback siempre queda antes que el nuestro.
+    this.events.on(Phaser.Scenes.Events.PRE_UPDATE, (_time: number, delta: number) => {
+      runSystems(this.systems, this.world, delta)
+      this.onUpdate?.(delta / 1000)
+      this.world.runPreSync()
+    })
+    this.events.on(Phaser.Scenes.Events.POST_UPDATE, () => {
+      this.world.runPostSync()
+    })
   }
 
   /** Hook de la subclase. Corre despues de resolver assets y construir systems. */
