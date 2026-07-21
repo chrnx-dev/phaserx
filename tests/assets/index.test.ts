@@ -36,4 +36,22 @@ describe('assets', () => {
     drainAssets()
     expect(drainAssets()).toEqual([])
   })
+
+  test('una clase rechazada no filtra sus bindings a la proxima escena', () => {
+    const badSpec = { type: 'image', url: 'ghost.png' } as unknown as typeof A.player
+
+    drainAssets() // limpiar residuos de otros tests
+    expect(() => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      class BrokenScene {
+        @Asset(A.player) leaked!: Phaser.Textures.Texture
+        @Asset(badSpec) bad!: Phaser.Textures.Texture
+      }
+    }).toThrow(/key/)
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    class NextScene {}
+    void NextScene
+    expect(drainAssets()).toEqual([])
+  })
 })

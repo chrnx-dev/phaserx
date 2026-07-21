@@ -39,7 +39,10 @@ export type AssetBinding = { property: string; spec: KeyedSpec }
  * Mismo patron que src/core/column.ts: los field decorators corren al
  * definirse la clase, antes de que el decorador de clase (@Scene, Task 8)
  * reciba la clase ya construida. Cada @Asset empuja su binding aca y
- * @Scene drena el buffer inmediatamente despues.
+ * @Scene drena el buffer inmediatamente despues. Si un @Asset lanza, la
+ * clase nunca termina de definirse y por lo tanto nunca llega a @Scene, asi
+ * que nadie drena el buffer: reject() lo vacia antes de lanzar para que los
+ * bindings ya acumulados de esa clase no se filtren a la proxima escena.
  */
 let pending: AssetBinding[] = []
 
@@ -48,6 +51,19 @@ export function drainAssets(): AssetBinding[] {
   const bindings = pending
   pending = []
   return bindings
+}
+
+/**
+ * Rechaza un campo invalido descartando el batch en curso.
+ *
+ * Si un field decorator lanza, la clase nunca termina de definirse y por lo
+ * tanto nunca llega a @Scene, asi que nadie drena el buffer. Sin este
+ * descarte los bindings ya acumulados de esa clase se filtrarian a la
+ * proxima escena que se defina, que puede ser una totalmente ajena.
+ */
+function reject(why: string): never {
+  pending = []
+  throw new Error(`@Asset: ${why}`)
 }
 
 /**
@@ -64,7 +80,7 @@ export function Asset<S extends AssetSpec>(spec: S) {
   ) {
     const keyed = spec as KeyedSpec<S>
     if (keyed.key === undefined) {
-      throw new Error('@Asset: el spec no viene de defineAssets(), le falta la key')
+      reject('el spec no viene de defineAssets(), le falta la key')
     }
     pending.push({ property: String(ctx.name), spec: keyed })
   }
