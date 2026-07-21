@@ -1,19 +1,17 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
-    "declaration": false,
-    "noImplicitAny": false,
-    "noUnusedLocals": false,
-    "removeComments": true,
-    "noLib": false,
-    "emitDecoratorMetadata": true,
-    "experimentalDecorators": true,
-    "target": "es6",
-    "sourceMap": true,
-    "allowJs": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "experimentalDecorators": false,
+    "useDefineForClassFields": true,
+    "noUncheckedIndexedAccess": false,
+    "skipLibCheck": true,
+    "declaration": true,
     "outDir": "dist",
-    "lib": ["es7"],
-    "esModuleInterop": true
+    "types": ["vitest/globals", "phaser"]
   },
-  "exclude": ["node_modules", "**/*.spec.ts"]
+  "include": ["src", "tests", "demo"]
 }

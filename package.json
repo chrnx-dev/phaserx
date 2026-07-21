@@ -1,29 +1,41 @@
 {
   "name": "phaserx",
-  "version": "0.0.1",
-  "description": "A Phaser Type Script Webpack Library",
-  "main": "src/game.ts",
-  "scripts": {
-    "start": "webpack-dev-server --config webpack/base.js --open"
+  "version": "0.1.0",
+  "description": "Decorator-powered ECS framework on top of Phaser 4",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./capacity": {
+      "types": "./dist/capacity.d.ts",
+      "import": "./dist/capacity.js"
+    }
   },
-  "author": "",
-  "license": "ISC",
-  "devDependencies": {
-    "clean-webpack-plugin": "^3.0.0",
-    "file-loader": "^4.2.0",
-    "html-webpack-plugin": "^3.2.0",
-    "raw-loader": "^3.1.0",
-    "reflect-metadata": "^0.1.13",
-    "terser-webpack-plugin": "^2.2.1",
-    "ts-loader": "^6.2.1",
-    "tslint": "^6.0.0-beta0",
-    "typescript": "^3.6.4",
-    "webpack": "^4.41.2",
-    "webpack-cli": "^3.3.10",
-    "webpack-dev-server": "^3.9.0",
-    "webpack-merge": "^4.2.2"
+  "files": ["dist"],
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "demo": "vite --config demo/vite.config.ts"
+  },
+  "peerDependencies": {
+    "phaser": "^4.0.0"
   },
   "dependencies": {
-    "phaser": "^3.20.1"
-  }
+    "bitecs": "0.4.0"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1",
+    "phaser": "4.2.1",
+    "typescript": "5.9.3",
+    "vite": "^7.3.6",
+    "vitest": "4.1.10"
+  },
+  "license": "MIT"
 }
