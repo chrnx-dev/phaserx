@@ -127,8 +127,8 @@ function assertCapacity(component: object, eid: Entity): void {
       `spawn: el entity id ${eid} excede la capacidad ${capacity} de las columnas del componente. ` +
         'El techo no es cuantas entidades tienen este componente, sino el espacio de entity ids ' +
         'del proceso: hay un unico index compartido por todas las escenas vivas, y un id solo se ' +
-        'libera al destruir su entidad. Subi el techo con configureCapacity(n) antes de definir ' +
-        'los componentes, o destrui las entidades que ya no uses.',
+        "libera al destruir su entidad. Subi el techo con configureCapacity(n), de 'phaserx/capacity', " +
+        'antes de definir los componentes, o destrui las entidades que ya no uses.',
     )
   }
 }

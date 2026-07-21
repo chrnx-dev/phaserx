@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { f32, i16, ref, u8 } from '../../src/core/column'
 import {
   component,
@@ -37,20 +37,34 @@ describe('component()', () => {
     expect(Object.keys(B)).toEqual(['y'])
   })
 
-  test('usa la capacidad configurada al momento de definirse', () => {
-    configureCapacity(16)
-    const Small = component(class { @f32 x = 0 })
-    configureCapacity(DEFAULT_CAPACITY)
+  // Estos dos tests necesitan un modulo de component.ts sin ningun componente
+  // definido todavia: los demas tests de este archivo ya llamaron a
+  // component() antes de que estos corran (module-level, mismo registro de
+  // vitest), y desde el arreglo del bloqueante de configureCapacity() eso
+  // basta para que la funcion lance. vi.resetModules() + import() dinamico
+  // consigue una instancia nueva, aislada de esa contaminacion. column.ts se
+  // importa del mismo modo y en el mismo momento para que sus decoradores
+  // (@f32 aca) empujen a la misma instancia de `pending` que va a drenar el
+  // component() de esa instancia fresca.
+  test('configureCapacity antes de definir componentes cambia la capacidad del siguiente', async () => {
+    vi.resetModules()
+    const column = await import('../../src/core/column')
+    const comp = await import('../../src/core/component')
+    comp.configureCapacity(16)
+    const Small = comp.component(class { @column.f32 x = 0 })
     expect(Small.x.length).toBe(16)
   })
 
-  test('los componentes ya definidos conservan su capacidad', () => {
-    const Antes = component(class { @f32 x = 0 })
-    configureCapacity(8)
-    const Despues = component(class { @f32 x = 0 })
-    configureCapacity(DEFAULT_CAPACITY)
-    expect(Antes.x.length).toBe(DEFAULT_CAPACITY)
-    expect(Despues.x.length).toBe(8)
+  test('configureCapacity lanza si ya hay componentes definidos', async () => {
+    vi.resetModules()
+    const column = await import('../../src/core/column')
+    const comp = await import('../../src/core/component')
+    comp.component(class { @column.f32 x = 0 })
+    expect(() => comp.configureCapacity(50_000)).toThrow(/ya se definieron 1 componente/)
+    expect(() => comp.configureCapacity(50_000)).toThrow(/configureCapacity/)
+    // El rechazo no cambia la capacidad vigente: el componente ya definido
+    // sigue siendo la unica fuente de verdad de con que capacidad se creo.
+    expect(comp.getConfiguredCapacity()).toBe(comp.DEFAULT_CAPACITY)
   })
 
   test('configureCapacity rechaza valores que no sean enteros positivos', () => {

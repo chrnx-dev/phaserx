@@ -126,7 +126,14 @@ function releaseSprite(eid: Entity): void {
  * Lanza si una llamada posterior trae una factory distinta de la registrada:
  * seguir usando la vieja en silencio haria que un restart con otra factory
  * pareciera funcionar y creara los GameObjects en la escena equivocada.
- * Para cambiar de factory hay que llamar a `detach()` primero.
+ *
+ * NO llames a `detach()` para "cambiar de factory y volver a enganchar": eso
+ * no es un camino soportado. `detach()` destruye los GameObjects de las
+ * entidades vivas y libera `Sprite.go` y `Sprite.key` (ver mas abajo), asi que
+ * esas entidades quedan zombis permanentes: siguen en `query(Sprite)`,
+ * invisibles, y volver a llamar a `attachSprites` con otra factory no las
+ * recupera, porque ya no queda ni la textura para reconstruirlas. La forma
+ * soportada de cambiar de factory es empezar con un world limpio.
  *
  * El `detach()` que devuelve destruye los GameObjects que sigan vivos antes de
  * desengancharse: las entidades sobreviven, pero se quedan sin GameObject.

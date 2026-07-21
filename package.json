@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./capacity": {
+      "types": "./dist/capacity.d.ts",
+      "import": "./dist/capacity.js"
     }
   },
   "files": ["dist"],

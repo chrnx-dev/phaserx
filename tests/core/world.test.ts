@@ -1,7 +1,7 @@
 import { getAllEntities } from 'bitecs'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { f32, i16, ref } from '../../src/core/column'
-import { component, configureCapacity, DEFAULT_CAPACITY } from '../../src/core/component'
+import { component } from '../../src/core/component'
 import { set, World } from '../../src/core/world'
 
 const Position = component(class { @f32 x = 0; @f32 y = 0 })
@@ -245,14 +245,25 @@ describe('World: hooks que se desregistran durante el run', () => {
 })
 
 describe('World: capacidad de las columnas', () => {
-  test('spawn lanza cuando el entity id excede la capacidad del componente', () => {
-    configureCapacity(3)
-    const Tiny = component(class { @f32 x = 0 })
-    configureCapacity(DEFAULT_CAPACITY)
-    const world = new World()
+  // Este archivo ya definio varios componentes module-level (arriba) antes de
+  // que este test corra, y desde el arreglo del bloqueante de
+  // configureCapacity() eso basta para que la funcion lance: ya no hay forma
+  // de reconfigurar la capacidad a mitad de camino, ni siquiera para volver a
+  // DEFAULT_CAPACITY despues. vi.resetModules() + import() dinamico de
+  // column.ts, component.ts y world.ts consigue un grafo de modulos nuevo,
+  // sin componentes definidos todavia, y aislado del entity index compartido
+  // de este archivo.
+  test('spawn lanza cuando el entity id excede la capacidad del componente', async () => {
+    vi.resetModules()
+    const column = await import('../../src/core/column')
+    const comp = await import('../../src/core/component')
+    const worldMod = await import('../../src/core/world')
+    comp.configureCapacity(3)
+    const Tiny = comp.component(class { @column.f32 x = 0 })
+    const world = new worldMod.World()
     let lanzo: unknown
     try {
-      for (let i = 0; i < 64; i++) world.spawn(set(Tiny, { x: 1 }))
+      for (let i = 0; i < 64; i++) world.spawn(worldMod.set(Tiny, { x: 1 }))
     } catch (err) {
       lanzo = err
     }
@@ -278,15 +289,34 @@ describe('World: spawn es atomico', () => {
     return getAllEntities(world.raw).length
   }
 
-  test('el guard de capacidad no deja la entidad viva', () => {
-    configureCapacity(1)
-    const Tiny = component(class { @f32 x = 0 })
-    configureCapacity(DEFAULT_CAPACITY)
-    const world = new World()
-    // El entity index es compartido por todo el proceso y este archivo ya
-    // repartio ids de sobra, asi que el primer spawn ya excede el techo de 1.
-    expect(() => world.spawn(set(Tiny, { x: 1 }))).toThrow(/capacidad/)
-    expect(vivas(world)).toBe(0)
+  test('el guard de capacidad no deja la entidad viva', async () => {
+    // Mismo aislamiento que el test anterior: configureCapacity() ya no
+    // acepta reconfigurar a mitad de camino, asi que necesita un grafo de
+    // modulos propio, sin componentes definidos todavia. Al ser un world
+    // fresco tambien parte de un entity index propio: bitECS reparte el eid 1
+    // (no el 0) en el primer addEntity, asi que con capacidad 2 el primer
+    // spawn entra (eid 1 < 2) y el segundo la excede (eid 2 >= 2). La
+    // asercion se mueve al segundo spawn para probar lo mismo que antes
+    // probaba el primero al apoyarse en ids ya repartidos por otros tests.
+    vi.resetModules()
+    // bitecs se reimporta tambien: vi.resetModules() vacia TODO el registro
+    // (paquetes de node_modules incluidos), asi que el world.ts fresco
+    // importado abajo trae su propia instancia de bitecs. Usar el
+    // `getAllEntities` estatico de arriba (atado a la instancia vieja) sobre
+    // un `world.raw` creado por la instancia nueva no esta garantizado.
+    const bitecsFresh = await import('bitecs')
+    const column = await import('../../src/core/column')
+    const comp = await import('../../src/core/component')
+    const worldMod = await import('../../src/core/world')
+    comp.configureCapacity(2)
+    const Tiny = comp.component(class { @column.f32 x = 0 })
+    const world = new worldMod.World()
+    function vivasFresh(w: InstanceType<typeof worldMod.World>): number {
+      return bitecsFresh.getAllEntities(w.raw).length
+    }
+    expect(() => world.spawn(worldMod.set(Tiny, { x: 1 }))).not.toThrow()
+    expect(() => world.spawn(worldMod.set(Tiny, { x: 1 }))).toThrow(/capacidad/)
+    expect(vivasFresh(world)).toBe(1)
   })
 
   test('una columna inexistente no deja la entidad viva', () => {

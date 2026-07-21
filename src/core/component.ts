@@ -9,6 +9,13 @@ export const DEFAULT_CAPACITY = 10_000
 let configuredCapacity: number = DEFAULT_CAPACITY
 
 /**
+ * Cuantos componentes se definieron ya en este proceso. `configureCapacity`
+ * la consulta para lanzar en vez de aceptar en silencio una llamada que ya no
+ * puede tener efecto. Ver el JSDoc de `configureCapacity`.
+ */
+let definedComponents = 0
+
+/**
  * Fija cuantos entity ids puede direccionar cada componente.
  *
  * Es module-level y no un parametro de `component()` a proposito. Los entity
@@ -20,15 +27,66 @@ let configuredCapacity: number = DEFAULT_CAPACITY
  * apenas otra escena hubiera repartido cuatro ids, aunque ese componente no lo
  * tuviera ni una entidad.
  *
- * Llamala UNA VEZ, antes de definir el primer componente (tipicamente en el
- * modulo de entrada, antes de importar los componentes). Los componentes ya
- * definidos conservan la capacidad que tenian: cambiarla a mitad de camino
- * deja columnas de distinto largo y el guard de `spawn` pasa a depender de
- * cual componente se mire.
+ * Llamala UNA VEZ, antes de definir el primer componente. Si ya hay
+ * componentes definidos, LANZA: no hay forma de que cambiar la capacidad
+ * ahora tenga efecto sobre ellos, y aceptar la llamada en silencio es
+ * exactamente el defecto que esta funcion vino a evitar (una perilla que
+ * parece funcionar y no hace nada). Los componentes ya definidos conservan la
+ * capacidad que tenian: cambiarla a mitad de camino dejaria columnas de
+ * distinto largo y el guard de `spawn` pasaria a depender de cual componente
+ * se mire, asi que ni siquiera se ofrece esa opcion.
+ *
+ * Advertencia de ESM: los `import` de un modulo se izan y se evaluan ANTES de
+ * la primera sentencia del cuerpo, asi que
+ *
+ * ```ts
+ * // main.ts — NO FUNCIONA
+ * import { configureCapacity } from 'phaserx'
+ * import { Position } from './components' // este modulo ya corrio y definio
+ * configureCapacity(50_000)                // Position antes de esta linea
+ * ```
+ *
+ * define `Position` con la capacidad default antes de que `configureCapacity`
+ * llegue a correr. Y ni siquiera alcanza con mover ese `import` a un modulo de
+ * solo efecto propio si lo trae de `'phaserx'`: el barrel reexporta el bridge,
+ * que define sus propios `Position`/`Velocity`/`Sprite` al evaluarse, y por la
+ * misma razon (los `import` se izan) ya estan definidos para cuando la llamada
+ * a `configureCapacity()` llega a correr. Por eso esta funcion tiene su propio
+ * punto de entrada, `'phaserx/capacity'`, cuyo grafo de modulos no toca el
+ * bridge:
+ *
+ * ```ts
+ * // capacity.ts
+ * import { configureCapacity } from 'phaserx/capacity'
+ * configureCapacity(50_000)
+ * ```
+ * ```ts
+ * // main.ts
+ * import './capacity'       // corre y configura ANTES de lo que sigue
+ * import { Position } from 'phaserx'
+ * ```
+ *
+ * (un `await import('phaserx/capacity')` dinamico antes de importar el resto
+ * de `'phaserx'` tambien funciona, por la misma razon: nada obliga a que la
+ * evaluacion del barrel empiece antes de que termine el `await`). Ver la
+ * seccion "La capacidad es global al proceso" del README para la receta
+ * completa.
  */
 export function configureCapacity(n: number): void {
   if (!Number.isInteger(n) || n <= 0) {
     throw new Error(`configureCapacity: la capacidad debe ser un entero positivo, no ${n}`)
+  }
+  if (definedComponents > 0) {
+    throw new Error(
+      `configureCapacity: ya se definieron ${definedComponents} componente(s) con capacidad ` +
+        `${configuredCapacity}; esta llamada no tendria efecto sobre ellos. configureCapacity() ` +
+        'debe correr antes de que se evalue el primer modulo que define componentes. En ESM los ' +
+        'import se izan, asi que no alcanza con ponerla antes en el mismo archivo: llamala desde ' +
+        "un modulo de solo efecto importado PRIMERO en el entry (import './capacity') que traiga " +
+        "configureCapacity de 'phaserx/capacity' (no de 'phaserx': ese barrel reexporta el bridge, " +
+        'que define sus propios componentes al evaluarse), o con un await import() dinamico antes ' +
+        'de importar los componentes.',
+    )
   }
   configuredCapacity = n
 }
@@ -129,6 +187,7 @@ export function component<C extends new () => unknown>(cls: C): SoA<InstanceType
   for (const name of Object.keys(store)) initial[name] = declared[name]
   defaults.set(store, initial)
   capacities.set(store, capacity)
+  definedComponents++
 
   return store as SoA<InstanceType<C>>
 }

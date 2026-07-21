@@ -288,13 +288,46 @@ Cada componente reserva columnas para `configureCapacity(n)` entity ids
 componente": los entity ids salen de un unico index compartido por todas las
 escenas vivas, asi que el techo es la cuenta global de entidades vivas del
 proceso. Si necesitas mas (o menos), llamala **una vez, antes de definir el
-primer componente**:
+primer componente**. Si ya hay componentes definidos, `configureCapacity`
+lanza en vez de aceptar la llamada en silencio: cambiar la capacidad a esa
+altura ya no puede tener efecto sobre ellos.
+
+Esto importa porque en ESM los `import` de un modulo se izan y se evaluan
+**antes** de la primera sentencia del cuerpo. Esta receta, la intuitiva, NO
+funciona:
 
 ```ts
-// main.ts, antes de importar los componentes
+// main.ts — NO FUNCIONA: Position ya se definio cuando corre configureCapacity
 import { configureCapacity } from 'phaserx'
+import { Position } from './components'
 configureCapacity(50_000)
 ```
+
+Y tampoco alcanza con mover el `import` de `configureCapacity` a un modulo de
+solo efecto propio si ese modulo lo importa de `'phaserx'`: el barrel
+reexporta el bridge, y el bridge define `Position`, `Velocity` y `Sprite` al
+evaluarse. Como los `import` se izan, `import { configureCapacity } from
+'phaserx'` evalua TODO el barrel -bridge incluido- antes de que la llamada a
+`configureCapacity()` que sigue llegue a correr, asi que para entonces esos
+tres componentes ya se definieron con la capacidad default y la llamada
+lanza. Por eso `configureCapacity` tiene su propio punto de entrada,
+`'phaserx/capacity'`, cuyo grafo de modulos no toca el bridge:
+
+```ts
+// capacity.ts
+import { configureCapacity } from 'phaserx/capacity'
+configureCapacity(50_000)
+```
+
+```ts
+// main.ts
+import './capacity'          // corre y configura antes de lo que sigue
+import { Position } from 'phaserx'
+```
+
+Un `await import('phaserx/capacity')` dinamico antes de importar el resto de
+`'phaserx'` tambien funciona, por la misma razon: nada obliga a que la
+evaluacion del barrel empiece antes de que termine el `await`.
 
 Un `@ref` con inicializador objeto comparte UNA sola instancia entre todas las
 entidades. Si cada una necesita la suya, declara el campo sin inicializador
@@ -305,7 +338,7 @@ entidades. Si cada una necesita la suya, declara el campo sin inicializador
 | Nombre | Que es |
 | --- | --- |
 | `component(cls)` | Materializa una clase de declaracion en un store SoA. |
-| `configureCapacity(n)` | Entity ids direccionables por componente. Una vez, al principio. |
+| `configureCapacity(n)` | Entity ids direccionables por componente. Una vez, al principio, desde `'phaserx/capacity'` (ver mas arriba). |
 | `@f32 @f64 @i8 @i16 @i32 @u8 @u16 @u32` | Columna numerica. |
 | `@ref` | Columna por referencia (objetos y strings). |
 | `World`, `set()` | `spawn`, `destroy`, `query`, `has`, `onAdd`, `onRemove`, `clear`, `teardown`. |
