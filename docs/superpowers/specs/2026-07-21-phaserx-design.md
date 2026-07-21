@@ -1,11 +1,18 @@
-# PhaserX — Framework de decoradores sobre Phaser 3
+# PhaserX — Framework de decoradores sobre Phaser 4
 
 Fecha: 2026-07-21
 Estado: aprobado, pendiente de plan de implementación
 
+## Versiones verificadas
+
+`phaser@4.2.1`, `bitecs@0.4.0`, `typescript@5.9.x`, `vite@7.x`, `vitest@4.x`.
+
+Phaser 4 conserva `Scene`, `Physics.Arcade` y las constantes de renderer, así que
+el diseño del bridge no cambia respecto de Phaser 3.
+
 ## Problema
 
-Phaser 3 está escrito en JavaScript con tipos de TypeScript agregados encima. El
+Phaser está escrito en JavaScript con tipos de TypeScript agregados encima. El
 resultado deja huecos que el usuario de TS paga a diario:
 
 - Strings mágicas para keys de assets, escenas y eventos. Un typo compila y falla
@@ -61,16 +68,29 @@ Sin esta regla ECS y Arcade se pisan la posición mutuamente.
 
 ### Componentes
 
-`@Component` sobre una clase; los field decorators de tipo (`@f32`, `@i16`,
-`@u8`, …) construyen el schema de bitECS vía `addInitializer`.
+bitECS 0.4 es **schema-less**: un componente es cualquier objeto y la librería
+solo lo usa como identidad. Por lo tanto el store SoA lo construye PhaserX.
+
+Los field decorators de tipo (`@f32`, `@i16`, `@u8`, …) declaran las columnas.
+Cada uno registra su campo en un buffer module-level que `component()` drena
+inmediatamente después, al definirse la clase. El resultado es un objeto SoA de
+TypedArrays indexado por entity id.
 
 ```ts
-@Component class Position { @f32 x = 0; @f32 y = 0 }
+const Position = component(class { @f32 x = 0; @f32 y = 0 })
+// => Position.x: Float32Array, Position.y: Float32Array (inferido)
 ```
 
-Los datos que no entran en un TypedArray (strings, refs a objetos) usan `@ref`,
-que guarda en un array lateral paralelo indexado por entidad, no en bitECS.
-`Sprite` usa `@ref` desde el día uno, así que el mecanismo se valida temprano.
+**Por qué una función y no `@Component`** — verificado con `tsc --strict`:
+TypeScript no ensancha el tipo de una clase con el valor devuelto por su
+decorador, ni siquiera devolviendo una intersección. Un class decorator daría
+`Property 'x' does not exist on type 'typeof Position'` en cada acceso, forzando
+`any`. La forma de función es la única que infiere los tipos de columna. No se
+provee alias decorador: sería un segundo dialecto sin tipos.
+
+Los datos que no entran en un TypedArray (strings, refs a GameObjects) usan
+`@ref`, que produce un componente array-of-structs sobre el helper `aos()` de
+bitECS. `Sprite` usa `@ref` desde el día uno.
 
 ### Systems
 
@@ -130,7 +150,8 @@ Vitest headless, sin navegador.
 - Solo el demo ejercita Phaser real.
 
 Test obligatorio: destruir una entidad con `Sprite` destruye su GameObject. Es la
-fuga clásica de todo bridge ECS.
+fuga clásica de todo bridge ECS. Se implementa con el observer nativo de bitECS
+0.4, `observe(world, onRemove(Sprite), eid => ...)`, no con lógica propia.
 
 ## Demo
 
@@ -144,9 +165,9 @@ Si el demo revela que una API incomoda, se cambia la API antes de publicar.
 
 | Riesgo | Salida |
 |---|---|
-| El schema por field decorators no cubre strings ni refs | `@ref` con array lateral; validado temprano vía `Sprite` |
-| Fuga de GameObjects al destruir entidades | Test dedicado en el bridge |
-| La API de bitECS cambió entre majors | Verificar versión y API al arrancar la implementación |
+| El store SoA por field decorators no cubre strings ni refs | `@ref` sobre `aos()` de bitECS; validado temprano vía `Sprite` |
+| Fuga de GameObjects al destruir entidades | `observe(world, onRemove(Sprite))` nativo + test dedicado |
+| Crecimiento del store más allá del tamaño inicial de los TypedArrays | Capacidad fija configurable en `createWorld`; se documenta el límite y el error al excederlo |
 | El demo revela API incómoda | Es el propósito del demo; cambiar antes de publicar |
 
 ## Fuera de alcance en v0.1
