@@ -333,3 +333,110 @@ describe('World: aislamiento entre worlds simultaneos', () => {
     expect(Health.hp[eb]).toBe(20)
   })
 })
+
+describe('World.clear', () => {
+  test('destruye todas las entidades vivas del world', () => {
+    const world = new World()
+    world.spawn(set(Position, { x: 1, y: 1 }))
+    world.spawn(set(Health, { hp: 5 }))
+    world.spawn(Enemy)
+    world.clear()
+    expect(world.query(Position)).toHaveLength(0)
+    expect(world.query(Health)).toHaveLength(0)
+    expect(world.query(Enemy)).toHaveLength(0)
+  })
+
+  test('alcanza a las entidades sin ningun componente', () => {
+    const world = new World()
+    const e = world.spawn()
+    world.clear()
+    expect(world.has(e, Position)).toBe(false)
+    // Un eid libre se recicla: el proximo spawn puede volver a tomarlo.
+    expect(() => world.destroy(e)).not.toThrow()
+  })
+
+  test('dispara los observers onRemove de cada entidad', () => {
+    const world = new World()
+    const vistos: number[] = []
+    world.onRemove(Health, eid => vistos.push(Health.hp[eid]))
+    world.spawn(set(Health, { hp: 7 }))
+    world.spawn(set(Health, { hp: 9 }))
+    world.clear()
+    expect(vistos.sort()).toEqual([7, 9])
+  })
+
+  test('resetea las columnas de todas las entidades destruidas', () => {
+    const world = new World()
+    const a = world.spawn(set(Position, { x: 10, y: 20 }), set(Label, { text: 'a' }))
+    const b = world.spawn(set(Position, { x: 30, y: 40 }))
+    world.clear()
+    expect(Position.x[a]).toBe(0)
+    expect(Position.x[b]).toBe(0)
+    expect(Label.text[a]).toBeUndefined()
+  })
+
+  test('no toca las entidades de otro world', () => {
+    const a = new World()
+    const b = new World()
+    a.spawn(set(Position, { x: 1, y: 1 }))
+    const eb = b.spawn(set(Position, { x: 2, y: 2 }))
+    a.clear()
+    expect([...b.query(Position)]).toEqual([eb])
+    expect(Position.x[eb]).toBe(2)
+  })
+
+  test('sobre un world vacio es un no-op', () => {
+    const world = new World()
+    expect(() => world.clear()).not.toThrow()
+  })
+
+  test('es repetible: dos clear seguidos dejan el world vacio igual', () => {
+    const world = new World()
+    world.spawn(set(Position, { x: 1, y: 1 }))
+    world.clear()
+    world.clear()
+    expect(world.query(Position)).toHaveLength(0)
+  })
+})
+
+describe('World.teardown', () => {
+  test('destruye las entidades ANTES de correr los hooks de teardown', () => {
+    const world = new World()
+    const orden: string[] = []
+    world.onRemove(Position, () => orden.push('onRemove'))
+    world.onTeardown(() => orden.push('teardown'))
+    world.spawn(set(Position, { x: 1, y: 1 }))
+    world.teardown()
+    expect(orden).toEqual(['onRemove', 'teardown'])
+  })
+
+  test('corre los hooks en orden de registro y una sola vez', () => {
+    const world = new World()
+    const orden: string[] = []
+    world.onTeardown(() => orden.push('a'))
+    world.onTeardown(() => orden.push('b'))
+    world.teardown()
+    world.teardown()
+    expect(orden).toEqual(['a', 'b'])
+  })
+
+  test('la funcion que devuelve onTeardown da de baja el hook', () => {
+    const world = new World()
+    const hook = vi.fn()
+    world.onTeardown(hook)()
+    world.teardown()
+    expect(hook).not.toHaveBeenCalled()
+  })
+
+  test('un hook que se da de baja a si mismo no se saltea a los que siguen', () => {
+    const world = new World()
+    const corridos: string[] = []
+    const off = world.onTeardown(() => {
+      corridos.push('primero')
+      off()
+    })
+    world.onTeardown(() => corridos.push('segundo'))
+    world.teardown()
+    expect(corridos).toEqual(['primero', 'segundo'])
+  })
+})

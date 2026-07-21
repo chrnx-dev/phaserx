@@ -3,12 +3,12 @@ import {
   Asset,
   attachSprites,
   type Entity,
+  entityOf,
   GameScene,
   Position,
   Scene,
   set,
   sprite,
-  Sprite,
   Velocity,
 } from '../src/index'
 import { A } from './assets'
@@ -36,9 +36,10 @@ export class JuegoScene extends GameScene {
   /** `${atacante}>${victima}` -> timestamp del ultimo golpe aplicado. */
   private readonly ultimoGolpe = new Map<string, number>()
 
-  protected onCreate(): void {
-    const detach = attachSprites(this.world, (key, x, y) => this.physics.add.sprite(x, y, key))
+  /** Listener propio del demo, el unico que esta escena da de baja a mano. */
+  private leerTeclado?: () => void
 
+  protected onCreate(): void {
     this.systems = [
       new PlayerInputSystem(keys),
       new ChaseSystem(),
@@ -53,7 +54,18 @@ export class JuegoScene extends GameScene {
     const jugadores = this.add.group()
     const enemigos = this.add.group()
 
-    const jugador = this.world.spawn(
+    // La factory recibe el entity id, asi que el GameObject entra al grupo que
+    // le corresponde en el mismo momento en que nace, consultando el world con
+    // ese eid. No hace falta ningun mapeo a mano ni ningun cast: el tipo que
+    // llega al grupo es el que devuelve `physics.add.sprite`.
+    attachSprites(this.world, (key, x, y, e) => {
+      const go = this.physics.add.sprite(x, y, key)
+      if (this.world.has(e, Player)) jugadores.add(go)
+      else enemigos.add(go)
+      return go
+    })
+
+    this.world.spawn(
       set(Position, { x: 400, y: 300 }),
       set(Velocity, { x: 0, y: 0 }),
       Player,
@@ -61,10 +73,9 @@ export class JuegoScene extends GameScene {
       set(Damage, { amount: 5 }),
       sprite(A.player),
     )
-    jugadores.add(this.gameObjectDe(jugador))
 
     for (let i = 0; i < 5; i++) {
-      const enemigo = this.world.spawn(
+      this.world.spawn(
         set(Position, { x: 100 + i * 120, y: 80 }),
         set(Velocity, { x: 0, y: 0 }),
         set(Enemy, { chaseSpeed: 120 }),
@@ -72,7 +83,6 @@ export class JuegoScene extends GameScene {
         set(Damage, { amount: 20 }),
         sprite(A.enemy),
       )
-      enemigos.add(this.gameObjectDe(enemigo))
     }
 
     this.physics.add.overlap(jugadores, enemigos, (a, b) => {
@@ -90,58 +100,29 @@ export class JuegoScene extends GameScene {
       keys.down = cursors.down.isDown
     }
     this.events.on(Phaser.Scenes.Events.PRE_UPDATE, leerTeclado)
-
-    // ---------------------------------------------------------------------
-    // LIMPIEZA DE CICLO DE VIDA, A MANO Y A PROPOSITO.
-    //
-    // GameScene no engancha NADA al SHUTDOWN: ni el `detach()` que devuelve
-    // attachSprites, ni la destruccion de las entidades del world. Sin este
-    // bloque, al hacer `scene.start('fin')` las entidades de esta escena
-    // sobreviven a la escena (los entity ids son globales al proceso y solo se
-    // reciclan al destruirse), el bridge queda enganchado a un world que ya no
-    // corre, y `Sprite.go` sigue apuntando a GameObjects que Phaser destruyo.
-    //
-    // No es una particularidad del demo: es el hallazgo 12 de
-    // docs/superpowers/notes/2026-07-21-demo-findings.md. Va explicito aca
-    // para que se vea el trabajo que el framework le deja al usuario.
-    // ---------------------------------------------------------------------
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      // El orden importa: destruir PRIMERO (el observer onRemove del bridge
-      // todavia esta enganchado y es el que libera Sprite.go y las sombras de
-      // posicion), y recien despues soltar el bridge. Al reves, cada entidad
-      // dejaria su GameObject y su sombra colgados para siempre.
-      //
-      // Se consulta por Position porque no hay forma de pedirle al world
-      // "todas las entidades"; en este demo toda entidad tiene Position.
-      // La copia con spread es obligatoria: query() devuelve el array vivo de
-      // bitECS y destroy() lo muta.
-      for (const e of [...this.world.query(Position)]) this.world.destroy(e)
-      detach()
-      this.events.off(Phaser.Scenes.Events.PRE_UPDATE, leerTeclado)
-      this.ultimoGolpe.clear()
-    })
+    this.leerTeclado = leerTeclado
   }
 
   /**
-   * El GameObject que el bridge acaba de crear para la entidad, marcado con su
-   * eid.
+   * Lo unico que esta escena tiene para limpiar: su propio listener de teclado.
    *
-   * El bridge no expone ningun mapeo GameObject -> entidad, y la factory de
-   * `attachSprites` solo recibe `(key, x, y)`: no sabe para que entidad esta
-   * creando el sprite. Como los callbacks de colision de Phaser hablan en
-   * GameObjects y el ECS habla en eids, el puente lo tiene que armar el
-   * usuario a mano, con `setData`.
+   * Las entidades del world y el `detach()` del bridge los apaga GameScene en
+   * el SHUTDOWN de Phaser (`world.teardown()`), asi que aca no hay una sola
+   * linea de ciclo de vida del framework.
    */
-  private gameObjectDe(e: Entity): Phaser.GameObjects.GameObject {
-    const go = Sprite.go[e] as unknown as Phaser.Physics.Arcade.Sprite
-    go.setData('eid', e)
-    return go
+  protected onShutdown(): void {
+    if (this.leerTeclado) this.events.off(Phaser.Scenes.Events.PRE_UPDATE, this.leerTeclado)
+    this.ultimoGolpe.clear()
   }
 
   /** Overlap jugador <-> enemigo: los dos se hacen dano al tocarse. */
   private contacto(a: Phaser.GameObjects.GameObject, b: Phaser.GameObjects.GameObject): void {
-    const jugador = a.getData('eid') as Entity
-    const enemigo = b.getData('eid') as Entity
+    // entityOf acepta cualquier objeto: el GameObject que llega del callback de
+    // Arcade entra tal cual, sin casts, y devuelve undefined si la entidad ya
+    // murio en este mismo frame.
+    const jugador = entityOf(a)
+    const enemigo = entityOf(b)
+    if (jugador === undefined || enemigo === undefined) return
     const ahora = this.time.now
     this.golpear(ahora, enemigo, jugador)
     this.golpear(ahora, jugador, enemigo)

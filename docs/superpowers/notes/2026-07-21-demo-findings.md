@@ -162,6 +162,11 @@ empezar con "no llamar a mano".
 
 ## 11. `attachSprites` devuelve un `detach()` que no tiene donde ir
 
+> **RESUELTO** junto con el 12: el `detach` ya no necesita ir a ningun lado
+> porque `attachSprites` lo registra solo en `world.onTeardown`, y `GameScene`
+> apaga el world en el `SHUTDOWN`. Sigue devolviendose para quien quiera soltar
+> el bridge antes de tiempo.
+
 La escena lo ignora porque no hay hook de shutdown en `GameScene`. O `GameScene` lo
 engancha sola al `SHUTDOWN`, o hay que exponer un `onShutdown()` para que el usuario
 tenga donde poner la limpieza. Tal como esta, el valor de retorno se descarta y el
@@ -175,6 +180,18 @@ producen estan en `demo/verify/` y se corren con `node demo/verify/lifecycle.mjs
 `node demo/verify/reentry.mjs`.
 
 ## 12. El ciclo de vida de escena no tiene dueno: la limpieza queda entera en el usuario
+
+> **RESUELTO.** `World` gano `clear()` (destruye todas las entidades vivas,
+> reusando `destroy()` para que corran los `onRemove` y el reseteo de columnas),
+> `onTeardown(hook)` y `teardown()` (= `clear()` y despues los hooks, en ese
+> orden y por unica vez). `attachSprites` registra su `detach` como hook de
+> teardown, del mismo modo en que ya se auto-registraba en `onPreSync`/
+> `onPostSync`, y `GameScene` engancha `world.teardown()` al `SHUTDOWN` de
+> Phaser. El demo perdio su bloque de limpieza manual entero, en las dos
+> escenas, y las mediciones de mas abajo se mantienen (`node
+> demo/verify/lifecycle.mjs`: 15/15, con el eid reciclado y sin `Sprite.go`
+> huerfanos). Tambien hay `onShutdown?()` para lo que sea propio del usuario:
+> en el demo, dar de baja su listener de teclado.
 
 Es la continuacion del 11, pero medida, y es el hallazgo mas caro de los tres.
 `GameScene` no engancha **nada** al `SHUTDOWN` de Phaser. Cuando una escena de
@@ -233,6 +250,14 @@ Lo que falta es un dueno: que `GameScene` enganche el `SHUTDOWN` por su cuenta
 
 ## 13. `GameScene` acumula un listener de frame por cada entrada a la escena
 
+> **RESUELTO.** `GameScene#create()` guarda los dos handlers en variables y los
+> da de baja en `this.events.once(SHUTDOWN, ...)`, junto con el teardown del
+> world. Medido de nuevo con `node demo/verify/reentry.mjs`, entrando y saliendo
+> cuatro veces: PRE_UPDATE `[5, 6, 7, 8]` -> `[5, 5, 5, 5]`, POST_UPDATE
+> `2 -> 3` en la segunda entrada -> `[2, 2, 2, 2]`, y con la escena apagada los
+> listeners de frame quedan en 0 (antes quedaba 1 de cada uno). El script ahora
+> lo afirma en vez de documentar la falla.
+
 `GameScene#create()` hace `this.events.on(PRE_UPDATE, ...)` y `on(POST_UPDATE, ...)`
 y nunca los da de baja. `Systems#shutdown()` de Phaser solo remueve los eventos de
 transicion, no los de frame, y el emitter sobrevive al shutdown. Entonces cada vez que
@@ -265,6 +290,16 @@ unico a su alcance es `events.off(PRE_UPDATE)` sin argumentos, que se lleva pues
 tambien los listeners de Phaser y los suyos propios.
 
 ## 14. De un GameObject no se puede volver a la entidad
+
+> **RESUELTO.** `SpriteFactory` pasa a ser `(key, x, y, entity) => SpriteLike`,
+> y el bridge exporta `entityOf(go: object): Entity | undefined`, que resuelve
+> contra un WeakMap poblado por el observer `onAdd` y limpiado por el `onRemove`
+> (asi un eid reciclado nunca queda alcanzable desde el GameObject del muerto).
+> Recibe `object` a proposito: el GameObject que llega de un callback de Arcade
+> entra tal cual, sin castear a `SpriteLike`. El demo quedo sin sus tres casts y
+> sin el `setData('eid', ...)`: su factory mete el sprite en el grupo que
+> corresponde consultando `world.has(entity, Player)`, y `contacto()` usa
+> `entityOf`.
 
 Todo lo que la fisica de Phaser reporta esta en GameObjects (`overlap`, `collider`,
 `pointerdown`), y todo lo que el ECS entiende son eids. El bridge no ofrece ninguna

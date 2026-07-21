@@ -4,6 +4,7 @@ import {
   createEntityIndex,
   createWorld,
   entityExists,
+  getAllEntities,
   getEntityComponents,
   hasComponent,
   observe,
@@ -155,6 +156,7 @@ export class World {
 
   private readonly preSyncHooks: HookList = { hooks: [], holes: false }
   private readonly postSyncHooks: HookList = { hooks: [], holes: false }
+  private readonly teardownHooks: HookList = { hooks: [], holes: false }
 
   constructor() {
     this.raw = createWorld(sharedEntityIndex)
@@ -174,6 +176,20 @@ export class World {
    */
   onPostSync(hook: () => void): () => void {
     return addHook(this.postSyncHooks, hook)
+  }
+
+  /**
+   * Registra limpieza que corre cuando el world se apaga (`teardown`).
+   *
+   * Es el punto de extension que usan las capas de arriba (el bridge registra
+   * aca su `detach`) para que el dueno del ciclo de vida (`GameScene`, en el
+   * SHUTDOWN de Phaser) pueda apagar todo con una sola llamada, sin conocer
+   * quien se engancho ni tener que importarlo.
+   *
+   * Devuelve una funcion que quita el hook.
+   */
+  onTeardown(hook: () => void): () => void {
+    return addHook(this.teardownHooks, hook)
   }
 
   runPreSync(): void {
@@ -259,6 +275,42 @@ export class World {
     const components = [...getEntityComponents(this.raw, entity)] as object[]
     removeEntity(this.raw, entity)
     for (const component of components) resetToDefaults(component, entity)
+  }
+
+  /**
+   * Destruye todas las entidades vivas del world.
+   *
+   * Es `destroy` sobre cada una, asi que corren los observers `onRemove` (el
+   * bridge destruye ahi los GameObjects) y se resetean las columnas. Sin esto
+   * la unica forma de vaciar un world era consultar por algun componente que
+   * uno supiera comun a todas las entidades: `query()` exige al menos uno, y
+   * una entidad que no lo tenga sobrevive en silencio, reteniendo su eid para
+   * siempre (el entity index es compartido y las columnas tienen capacidad
+   * fija).
+   *
+   * La lista se copia antes de iterar porque `destroy` la muta.
+   */
+  clear(): void {
+    for (const entity of [...getAllEntities(this.raw)] as Entity[]) this.destroy(entity)
+  }
+
+  /**
+   * Apaga el world: destruye sus entidades y corre los hooks de `onTeardown`.
+   *
+   * El orden no es negociable y por eso vive aca y no en el usuario: las
+   * entidades se destruyen ANTES de los hooks, porque el `detach` del bridge
+   * (que es un hook de teardown) quita el observer `onRemove` que destruye los
+   * GameObjects. Al reves, cada entidad dejaria su GameObject y sus sombras de
+   * posicion colgados para siempre.
+   *
+   * Los hooks corren una sola vez: despues de correrlos la lista queda vacia,
+   * asi que un segundo `teardown()` solo vuelve a vaciar las entidades.
+   */
+  teardown(): void {
+    this.clear()
+    runHooks(this.teardownHooks)
+    this.teardownHooks.hooks.length = 0
+    this.teardownHooks.holes = false
   }
 
   has(entity: Entity, component: object): boolean {

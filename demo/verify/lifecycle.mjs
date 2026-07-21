@@ -142,6 +142,9 @@ try {
     `${fmt(sonda)} / posiciones de la escena vieja: ${fmt([...posViejas.values()])}`,
   )
 
+  // Sin limpieza manual en el demo: si GameScene no apagara el world en el
+  // SHUTDOWN, los eids de la escena vieja quedarian tomados para siempre y este
+  // chequeo mediria un eid nuevo (medido antes del arreglo: 5 en vez de 3).
   r.check(
     'el entity id se reciclo de la escena anterior (prueba de que el world viejo se limpio)',
     sonda !== undefined && eidsViejos.has(sonda.e),
@@ -157,8 +160,9 @@ try {
   )
 
   // Los GameObjects de la escena vieja los destruye Phaser al hacer shutdown,
-  // pero el `Sprite.go` del ECS solo se libera si alguien destruye la entidad:
-  // esto mide que el detach/destroy manual del demo efectivamente corrio.
+  // pero el `Sprite.go` del ECS solo se libera si alguien destruye la entidad.
+  // El demo ya NO tiene limpieza manual: esto mide que el `world.teardown()`
+  // que GameScene engancha al SHUTDOWN corrio de verdad (hallazgo 12).
   const huerfanos = await page.evaluate(() => {
     const { game, components } = window.__phaserx
     const { Sprite } = components

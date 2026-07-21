@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { component } from '../../src/core/component'
 import { set, World } from '../../src/core/world'
 import {
   attachSprites,
+  entityOf,
   Position,
   postSync,
   preSync,
@@ -354,5 +356,130 @@ describe('bridge: worlds simultaneos', () => {
     creadosB[0].x = 77
     postSync(wB)
     expect(Position.x[eb]).toBe(77)
+  })
+})
+
+describe('bridge: mapeo GameObject -> entidad', () => {
+  test('la factory recibe el entity id de la entidad que se esta creando', () => {
+    const world = new World()
+    const recibidos: number[] = []
+    attachSprites(world, (key, x, y, entity) => {
+      recibidos.push(entity)
+      return fakeSprite(key, x, y) as unknown as SpriteLike
+    })
+    const a = world.spawn(set(Position, { x: 0, y: 0 }), sprite({ key: 'hero' }))
+    const b = world.spawn(set(Position, { x: 1, y: 1 }), sprite({ key: 'hero' }))
+    expect(recibidos).toEqual([a, b])
+  })
+
+  test('la factory puede consultar el world con el eid que recibe', () => {
+    const world = new World()
+    const Marca = component(class {})
+    let marcada: boolean | undefined
+    attachSprites(world, (key, x, y, entity) => {
+      marcada = world.has(entity, Marca)
+      return fakeSprite(key, x, y) as unknown as SpriteLike
+    })
+    world.spawn(set(Position, { x: 0, y: 0 }), Marca, sprite({ key: 'hero' }))
+    expect(marcada).toBe(true)
+  })
+
+  test('entityOf devuelve la entidad duena del GameObject', () => {
+    const world = new World()
+    const creados: ReturnType<typeof fakeSprite>[] = []
+    attachSprites(world, (key, x, y) => {
+      const s = fakeSprite(key, x, y)
+      creados.push(s)
+      return s as unknown as SpriteLike
+    })
+    const e = world.spawn(set(Position, { x: 0, y: 0 }), sprite({ key: 'hero' }))
+    expect(entityOf(creados[0])).toBe(e)
+  })
+
+  test('entityOf devuelve undefined para un GameObject ajeno al bridge', () => {
+    expect(entityOf(fakeSprite('x', 0, 0))).toBeUndefined()
+  })
+
+  test('destruir la entidad rompe el mapeo del GameObject', () => {
+    const world = new World()
+    const creados: ReturnType<typeof fakeSprite>[] = []
+    attachSprites(world, (key, x, y) => {
+      const s = fakeSprite(key, x, y)
+      creados.push(s)
+      return s as unknown as SpriteLike
+    })
+    const e = world.spawn(set(Position, { x: 0, y: 0 }), sprite({ key: 'hero' }))
+    world.destroy(e)
+    expect(entityOf(creados[0])).toBeUndefined()
+  })
+
+  test('un eid reciclado no deja el GameObject viejo apuntando a la entidad nueva', () => {
+    const world = new World()
+    const creados: ReturnType<typeof fakeSprite>[] = []
+    attachSprites(world, (key, x, y) => {
+      const s = fakeSprite(key, x, y)
+      creados.push(s)
+      return s as unknown as SpriteLike
+    })
+    const e = world.spawn(set(Position, { x: 0, y: 0 }), sprite({ key: 'hero' }))
+    world.destroy(e)
+    world.spawn(set(Position, { x: 5, y: 5 }), sprite({ key: 'hero' }))
+    expect(entityOf(creados[0])).toBeUndefined()
+    expect(creados).toHaveLength(2)
+  })
+})
+
+describe('attachSprites: limpieza por teardown del world', () => {
+  test('world.teardown() desengancha el bridge', () => {
+    const world = new World()
+    const creados: ReturnType<typeof fakeSprite>[] = []
+    const factory = (key: string, x: number, y: number) => {
+      const s = fakeSprite(key, x, y)
+      creados.push(s)
+      return s as unknown as SpriteLike
+    }
+    attachSprites(world, factory)
+    world.spawn(set(Position, { x: 0, y: 0 }), sprite({ key: 'hero' }))
+    world.teardown()
+
+    expect(creados[0].destroyed).toBe(true)
+    world.spawn(set(Position, { x: 0, y: 0 }), sprite({ key: 'hero' }))
+    expect(creados).toHaveLength(1)
+  })
+
+  test('tras el teardown el world admite una factory distinta', () => {
+    const world = new World()
+    const otros: ReturnType<typeof fakeSprite>[] = []
+    attachSprites(world, (k, x, y) => fakeSprite(k, x, y) as unknown as SpriteLike)
+    world.teardown()
+    expect(() =>
+      attachSprites(world, (k, x, y) => {
+        const s = fakeSprite(k, x, y)
+        otros.push(s)
+        return s as unknown as SpriteLike
+      }),
+    ).not.toThrow()
+    world.spawn(set(Position, { x: 0, y: 0 }), sprite({ key: 'hero' }))
+    expect(otros).toHaveLength(1)
+  })
+
+  test('un detach manual previo no deja el hook de teardown colgado', () => {
+    const world = new World()
+    const detach = attachSprites(world, (k, x, y) => fakeSprite(k, x, y) as unknown as SpriteLike)
+    detach()
+    const segundos: ReturnType<typeof fakeSprite>[] = []
+    attachSprites(world, (k, x, y) => {
+      const s = fakeSprite(k, x, y)
+      segundos.push(s)
+      return s as unknown as SpriteLike
+    })
+    world.clear()
+    // El teardown del world no debe llevarse puesto el enganche nuevo salvo
+    // por su propio hook: tras teardown el bridge nuevo queda desenganchado.
+    world.spawn(set(Position, { x: 0, y: 0 }), sprite({ key: 'hero' }))
+    expect(segundos).toHaveLength(1)
+    world.teardown()
+    world.spawn(set(Position, { x: 0, y: 0 }), sprite({ key: 'hero' }))
+    expect(segundos).toHaveLength(1)
   })
 })

@@ -8,11 +8,6 @@ import { A } from './assets'
  * Existe sobre todo para ejercitar el ciclo de vida completo: world nuevo,
  * `attachSprites` sobre otro world, y entity ids que se reciclan entre
  * escenas (los ids son globales al proceso, ver World en src/core/world.ts).
- *
- * No ofrece "reiniciar" a proposito: volver a entrar a una escena de PhaserX
- * duplica los listeners de frame que `GameScene#create()` registra, y los
- * systems pasan a correr dos veces por frame. Es el hallazgo 13 de
- * docs/superpowers/notes/2026-07-21-demo-findings.md.
  */
 @Scene({ key: 'fin' })
 export class FinScene extends GameScene {
@@ -28,7 +23,7 @@ export class FinScene extends GameScene {
   }
 
   protected onCreate(): void {
-    const detach = attachSprites(this.world, (key, x, y) => this.physics.add.sprite(x, y, key))
+    attachSprites(this.world, (key, x, y) => this.physics.add.sprite(x, y, key))
 
     this.add.text(400, 220, 'GAME OVER', { fontSize: '48px', color: '#ffffff' }).setOrigin(0.5)
     this.add
@@ -47,12 +42,7 @@ export class FinScene extends GameScene {
       set(Velocity, { x: 0, y: 0 }),
       sprite(A.enemy),
     )
-
-    // Misma limpieza manual que en JuegoScene, por el mismo motivo (hallazgo
-    // 12): GameScene no engancha nada al SHUTDOWN.
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      for (const e of [...this.world.query(Position)]) this.world.destroy(e)
-      detach()
-    })
+    // No hay limpieza a mano: GameScene apaga el world y suelta el bridge en el
+    // SHUTDOWN de Phaser.
   }
 }

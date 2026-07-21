@@ -1,11 +1,18 @@
 import { f32, ref } from '../core/column'
 import { component } from '../core/component'
-import { set, type Setter, type World } from '../core/world'
+import { type Entity, set, type Setter, type World } from '../core/world'
 
 export const Position = component(class { @f32 x = 0; @f32 y = 0 })
 export const Velocity = component(class { @f32 x = 0; @f32 y = 0 })
 
-/** Lo minimo que el bridge necesita de un GameObject. Facilita testear sin canvas. */
+/**
+ * Lo minimo que el bridge necesita de un GameObject. Facilita testear sin canvas.
+ *
+ * Es deliberadamente estructural y minimo, asi que `Sprite.go[e]` esta tipado
+ * como esto y no como el `Phaser.GameObjects.Sprite` que devuelve la factory
+ * del usuario. Para volver del GameObject a la entidad hay `entityOf(go)`, que
+ * acepta cualquier objeto y no obliga a ningun cast.
+ */
 export interface SpriteLike {
   x: number
   y: number
@@ -20,7 +27,39 @@ export const Sprite = component(
   },
 )
 
-export type SpriteFactory = (key: string, x: number, y: number) => SpriteLike
+/**
+ * Crea el GameObject de una entidad.
+ *
+ * Recibe el entity id ademas de la textura y la posicion: es el unico momento
+ * en que el GameObject y su entidad estan juntos, asi que desde aca se puede
+ * consultar el world (`world.has(entity, Player)`) o meter el GameObject en el
+ * grupo que corresponda, sin necesidad de mapearlo despues a mano.
+ */
+export type SpriteFactory = (key: string, x: number, y: number, entity: Entity) => SpriteLike
+
+/**
+ * GameObject -> entidad, para todos los GameObjects que creo el bridge.
+ *
+ * Es un WeakMap y no una columna porque la clave es el GameObject: se vacia
+ * sola si alguien suelta la referencia sin pasar por `destroy`, y no consume
+ * espacio de eids. El `onRemove` del bridge lo borra explicitamente igual, asi
+ * un eid reciclado nunca queda alcanzable desde el GameObject del muerto.
+ */
+const entities = new WeakMap<object, Entity>()
+
+/**
+ * La entidad duena de un GameObject, o `undefined` si no lo creo el bridge (o
+ * si su entidad ya murio).
+ *
+ * Existe porque la fisica de Phaser habla en GameObjects y el ECS en entity
+ * ids: los callbacks de `overlap`, `collider` y `pointerdown` reciben
+ * `Phaser.GameObjects.GameObject`, y esta es la vuelta a la entidad. Acepta
+ * cualquier objeto justamente para que el usuario no tenga que castear el
+ * GameObject de Phaser al `SpriteLike` del bridge.
+ */
+export function entityOf(go: object): Entity | undefined {
+  return entities.get(go)
+}
 
 /**
  * Ultima posicion que `postSync` leyo del GameObject, por entity id.
@@ -99,8 +138,9 @@ export function attachSprites(world: World, factory: SpriteFactory): () => void 
         'Sprite: la entidad necesita Position. Usar set(Position, ...) antes de sprite() en el spawn.',
       )
     }
-    const go = factory(key, Position.x[eid], Position.y[eid])
+    const go = factory(key, Position.x[eid], Position.y[eid], eid)
     Sprite.go[eid] = go
+    entities.set(go, eid)
     // La sombra arranca sincronizada con Position: el GameObject acaba de
     // nacer en esa posicion, asi que el primer preSync no tiene nada que
     // copiar. Si la factory decidio otra posicion, esa gana (es el
@@ -112,7 +152,12 @@ export function attachSprites(world: World, factory: SpriteFactory): () => void 
 
   const offRemove = world.onRemove(Sprite, eid => {
     const go = Sprite.go[eid]
-    if (go !== undefined) go.destroy()
+    if (go !== undefined) {
+      // El mapeo se borra antes de destruir: un handler de `destroy` que
+      // consulte `entityOf` debe ver ya la entidad como ida, no como viva.
+      entities.delete(go)
+      go.destroy()
+    }
     // Liberar las referencias: sin esto el array retiene el GameObject y la
     // entidad reciclada heredaria el sprite del ocupante anterior.
     delete Sprite.go[eid]
@@ -128,7 +173,15 @@ export function attachSprites(world: World, factory: SpriteFactory): () => void 
     offPostSync()
     offAdd()
     offRemove()
+    offTeardown()
   }
+  // El bridge se da de baja solo cuando el world se apaga, del mismo modo en
+  // que se auto-registra en los hooks de frame. Asi el dueno del ciclo de vida
+  // (GameScene, en el SHUTDOWN de Phaser) llama a `world.teardown()` y no tiene
+  // que conocer al bridge, que es una capa de arriba: quien engancha es quien
+  // sabe como desenganchar. El usuario que quiera soltarlo antes sigue teniendo
+  // el `detach` que devuelve esta funcion, y llamarlo tambien quita este hook.
+  const offTeardown = world.onTeardown(() => detach())
   attached.set(world, { detach, factory })
   return detach
 }

@@ -126,15 +126,48 @@ export abstract class GameScene extends Phaser.Scene {
     // ArcadePhysics registra su listener de POST_UPDATE durante el boot de
     // la escena (antes de que create() corra), asi que en ese evento su
     // callback siempre queda antes que el nuestro.
-    this.events.on(Phaser.Scenes.Events.PRE_UPDATE, (_time: number, delta: number) => {
+    const onPreUpdate = (_time: number, delta: number): void => {
       runSystems(this.systems, this.world, delta)
       this.onUpdate?.(delta / 1000)
       this.world.runPreSync()
-    })
-    this.events.on(Phaser.Scenes.Events.POST_UPDATE, () => {
+    }
+    const onPostUpdate = (): void => {
       this.world.runPostSync()
+    }
+    this.events.on(Phaser.Scenes.Events.PRE_UPDATE, onPreUpdate)
+    this.events.on(Phaser.Scenes.Events.POST_UPDATE, onPostUpdate)
+
+    // El emitter de la escena sobrevive al shutdown y Systems#shutdown() de
+    // Phaser solo remueve los eventos de transicion, no los de frame: sin esta
+    // baja, cada re-entrada a la escena sumaria otro par de listeners y con el
+    // otro pase entero de runSystems + preSync por frame. El usuario no puede
+    // arreglarlo desde afuera (lo unico a su alcance seria `events.off(
+    // PRE_UPDATE)` sin argumentos, que se lleva puestos tambien los listeners
+    // de Phaser y los suyos), asi que la baja va aca, con las referencias que
+    // solo esta clase tiene.
+    //
+    // El teardown del world va en el mismo lugar por el mismo motivo: al
+    // apagarse la escena Phaser destruye los GameObjects, y sin esto las
+    // entidades sobreviven con sus eids tomados para siempre (el entity index
+    // es compartido y las columnas tienen capacidad fija) y el bridge queda
+    // enganchado a un world que ya no corre, lo cual ademas hace fallar la
+    // proxima entrada a la escena. `teardown()` fija el orden correcto:
+    // destruir las entidades primero, soltar el bridge despues.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.events.off(Phaser.Scenes.Events.PRE_UPDATE, onPreUpdate)
+      this.events.off(Phaser.Scenes.Events.POST_UPDATE, onPostUpdate)
+      this.onShutdown?.()
+      this.world.teardown()
+      this.systems = []
     })
   }
+
+  /**
+   * Hook de la subclase. Corre en el SHUTDOWN de Phaser: ya no hay frames,
+   * pero las entidades siguen vivas (el world se apaga inmediatamente despues).
+   * Es el espejo de onCreate().
+   */
+  protected onShutdown?(): void
 
   /** Hook de la subclase. Corre despues de resolver assets y construir systems. */
   protected onCreate?(): void

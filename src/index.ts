@@ -15,6 +15,7 @@ export { GameScene, getSceneMeta, runSystems, Scene } from './scene/index'
 export type { SceneConfig, SceneMeta } from './scene/index'
 export {
   attachSprites,
+  entityOf,
   Position,
   postSync,
   preSync,

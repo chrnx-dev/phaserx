@@ -11,7 +11,7 @@ test('exporta la superficie publica completa', () => {
     'Token', 'provide', 'resolve', 'clearProviders', 'Inject',
     'defineAssets', 'Asset',
     'Scene', 'GameScene', 'getSceneMeta', 'runSystems',
-    'Position', 'Velocity', 'Sprite', 'sprite', 'attachSprites', 'preSync', 'postSync',
+        'Position', 'Velocity', 'Sprite', 'sprite', 'attachSprites', 'entityOf', 'preSync', 'postSync',
   ]
   for (const nombre of esperado) {
     expect(phaserx, `falta el export '${nombre}'`).toHaveProperty(nombre)

@@ -1,14 +1,14 @@
 /**
- * Diagnostico de re-entrada a una escena de PhaserX.
+ * Re-entrada a una escena de PhaserX: los listeners de frame no se acumulan.
  *
- * NO es parte del demo: el demo no ofrece "reiniciar" justamente por lo que
- * este script mide. Vuelve a arrancar la escena "juego" despues de haberla
- * abandonado y cuenta cuantos listeners de PRE_UPDATE quedan registrados.
+ * Vuelve a arrancar la escena "juego" despues de haberla abandonado, cuatro
+ * veces, y cuenta cuantos listeners de PRE_UPDATE quedan registrados.
  *
- * `GameScene#create()` hace `this.events.on(PRE_UPDATE, ...)` en cada create y
- * nunca lo da de baja, y `Systems#shutdown()` de Phaser solo remueve los
- * eventos de transicion, no los de frame. Volver a entrar deberia dejar el
- * mismo numero de listeners que la primera vez.
+ * `GameScene#create()` hace `this.events.on(PRE_UPDATE, ...)` en cada create, y
+ * `Systems#shutdown()` de Phaser solo remueve los eventos de transicion, no los
+ * de frame: la baja la hace GameScene por su cuenta en el SHUTDOWN (hallazgo
+ * 13). Antes del arreglo la serie medida era [5, 6, 7, 8]; el chequeo de abajo
+ * afirma que ahora es constante.
  *
  *   node demo/verify/reentry.mjs
  */
@@ -16,7 +16,7 @@ import { abrirDemo, crearReporte, fmt, levantarServidor, snapshot } from './harn
 
 const servidor = await levantarServidor()
 const { browser, page, errores } = await abrirDemo(servidor.url)
-const r = crearReporte('PhaserX demo - re-entrada a una escena (diagnostico)')
+const r = crearReporte('PhaserX demo - re-entrada a una escena')
 
 const contarListeners = key =>
   page.evaluate(k => {
@@ -42,9 +42,15 @@ try {
   r.dato('con la escena apagada', fmt(apagada))
 
   r.check(
-    'al apagar la escena su world queda vacio (lo limpia el SHUTDOWN del demo)',
+    'al apagar la escena su world queda vacio (lo limpia GameScene en el SHUTDOWN)',
     apagada.entidades === 0 && apagada.gameObjects === 0,
     fmt(apagada),
+  )
+
+  r.check(
+    'la escena apagada no deja ningun listener de frame',
+    apagada.preupdate === 0 && apagada.postupdate === 0,
+    fmt({ preupdate: apagada.preupdate, postupdate: apagada.postupdate }),
   )
 
   await page.evaluate(() => window.__phaserx.game.scene.start('juego'))
@@ -66,22 +72,46 @@ try {
       `gameObjects ${primera.gameObjects} -> ${segunda.gameObjects}`,
   )
 
-  // El leak es lineal: cada entrada agrega un listener mas, y con el un pase
-  // completo de runSystems + preSync (y de postSync) por frame.
+  // Antes del arreglo el leak era lineal: cada entrada agregaba un listener
+  // mas, y con el un pase completo de runSystems + preSync (y de postSync) por
+  // frame. La serie medida entonces fue [5, 6, 7, 8]; ahora tiene que ser
+  // constante.
   const serie = [primera.preupdate, segunda.preupdate]
+  const seriePost = [primera.postupdate, segunda.postupdate]
   for (let i = 0; i < 2; i++) {
     await page.evaluate(() => window.__phaserx.game.scene.stop('juego'))
     await new Promise(res => setTimeout(res, 150))
     await page.evaluate(() => window.__phaserx.game.scene.start('juego'))
     await new Promise(res => setTimeout(res, 350))
-    serie.push((await contarListeners('juego')).preupdate)
+    const c = await contarListeners('juego')
+    serie.push(c.preupdate)
+    seriePost.push(c.postupdate)
   }
   r.dato('listeners de PRE_UPDATE por numero de entrada a la escena', fmt(serie))
+  r.dato('listeners de POST_UPDATE por numero de entrada a la escena', fmt(seriePost))
   r.check(
-    'el numero de listeners de frame no crece con las entradas sucesivas',
+    'el numero de listeners de PRE_UPDATE no crece con las entradas sucesivas',
     new Set(serie).size === 1,
-    `serie = ${fmt(serie)} (crece +1 por entrada: cada uno es un pase entero de ` +
-      `runSystems + preSync por frame)`,
+    `serie = ${fmt(serie)} (antes del arreglo crecia +1 por entrada: cada uno era un ` +
+      `pase entero de runSystems + preSync por frame)`,
+  )
+  r.check(
+    'el numero de listeners de POST_UPDATE no crece con las entradas sucesivas',
+    new Set(seriePost).size === 1,
+    `serie = ${fmt(seriePost)}`,
+  )
+
+  // El contrafactual del hallazgo 12: sin limpieza manual en el demo, la
+  // segunda entrada moria dentro de GameScene#create() con
+  // "attachSprites: el world ya esta enganchado con otra factory". Que las
+  // entradas sucesivas dejen el world con las 6 entidades de siempre es la
+  // prueba de que el teardown del world lo hace ahora el framework.
+  const ultima = await contarListeners('juego')
+  r.check(
+    'tras cuatro entradas la escena sigue naciendo con su world completo y sin sobras',
+    ultima.entidades === primera.entidades && ultima.gameObjects === primera.gameObjects,
+    `entidades ${primera.entidades} -> ${ultima.entidades}, ` +
+      `gameObjects ${primera.gameObjects} -> ${ultima.gameObjects}`,
   )
 
   const snap = await snapshot(page)
@@ -89,13 +119,6 @@ try {
   r.check('la consola no reporta errores', errores.length === 0, fmt(errores))
 
   const ok = r.cerrar()
-  if (!ok) {
-    console.log(
-      '\nLas fallas de este script son el hallazgo 13 documentado en\n' +
-        'docs/superpowers/notes/2026-07-21-demo-findings.md, no una regresion del demo:\n' +
-        'GameScene no da de baja sus listeners de frame al SHUTDOWN.',
-    )
-  }
   await browser.close()
   servidor.cerrar()
   process.exit(ok ? 0 : 1)
