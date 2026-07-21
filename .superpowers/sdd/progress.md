@@ -54,3 +54,5 @@ Task 11: complete (commits c325b9d..89125ec, review clean)
   Entregable: docs/superpowers/notes/2026-07-21-demo-findings.md (14 hallazgos de ergonomia)
 TODAS LAS TAREAS COMPLETAS. Pendiente: review final de rama.
 Review final de rama: 6 bloqueantes arreglados (spawn atomico, README+LICENSE+import de Phaser, configureCapacity, barrel sin internos, @Scene valida @System, detach destruye GameObjects). Detalle en .superpowers/sdd/final-fix-report.md
+Final fixes: commit 91ec35e (6 bloqueantes)
+REVIEW FINAL DE RAMA: mergeable (commit bcfa4ee). Deuda documentada en KNOWN-ISSUES.md
